@@ -368,7 +368,8 @@ Connect the GitHub repository to Cloudflare Workers Builds:
 
 After connecting, every push to `main` triggers Cloudflare to build and deploy
 automatically. No GitHub Actions workflow is required — Cloudflare's native Git
-integration handles CI/CD.
+integration handles CI/CD. (Verified: push to `main` → Cloudflare Builds →
+`wrangler deploy` → `workers.dev` update.)
 
 ### Notes
 
