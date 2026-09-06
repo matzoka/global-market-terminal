@@ -1,0 +1,15 @@
+{
+  // Global Market Terminal — Cloudflare Worker configuration.
+  // Single Worker + Static Assets. No framework, no build step.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "global-market-terminal",
+  "main": "server/worker.mjs",
+  "compatibility_date": "2026-09-06",
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

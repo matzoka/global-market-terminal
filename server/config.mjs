@@ -1,8 +1,9 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Resolve from this module so a background service cannot silently ignore .env.
-try { process.loadEnvFile(join(dirname(fileURLToPath(import.meta.url)), '..', '.env')); } catch { /* first run may be intentionally unconfigured */ }
+// On Cloudflare Workers, environment variables and secrets are injected into
+// process.env automatically (via wrangler.jsonc `vars` / `secret` bindings),
+// so no .env file loading is needed or available.
 
 const intFromEnv = (name, fallback, min, max) => {
   const value = Number.parseInt(process.env[name] || '', 10);
