@@ -1,5 +1,11 @@
 const API_BASE = 'https://eodhd.com/api';
 
+// Yahoo Finance index symbols (keyless fallback for daily bars when the EODHD
+// token is missing or the upstream call fails).
+const YAHOO_INDEX = Object.freeze({
+  SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', DAX: '^GDAXI', N225: '^N225', HSI: '^HSI',
+});
+
 // Verified against EODHD's INDX symbol list on 2026-08-15. FTSE 100 did not
 // resolve to the underlying index in that list, so it is deliberately omitted.
 const INDEX_SYMBOLS = Object.freeze({
@@ -38,6 +44,7 @@ export function createEodhdProvider(token) {
     id: 'EODHD_EOD',
     minimumRefreshMs: 24 * 60 * 60 * 1000,
     supports(instrument) { return instrument.kind === 'index' && Boolean(INDEX_SYMBOLS[instrument.id]); },
+    supportsDailyBars(instrument) { return this.supports(instrument); },
     async getQuotes(requestedInstruments) {
       const from = new Date();
       from.setUTCDate(from.getUTCDate() - 130);
@@ -58,6 +65,36 @@ export function createEodhdProvider(token) {
         });
       }
       return result;
+    },
+    async getDailyBars(instrument, outputSize = 60) {
+      const symbol = INDEX_SYMBOLS[instrument.id];
+      if (!symbol) return [];
+      const from = new Date();
+      from.setUTCDate(from.getUTCDate() - Math.max(130, outputSize * 3));
+      try {
+        const raw = await request(`eod/${encodeURIComponent(symbol)}`, { from: from.toISOString().slice(0, 10), order: 'a' }, token);
+        const bars = normaliseBars(raw).slice(-Math.max(2, outputSize));
+        if (bars.length >= 2) return bars;
+      } catch {
+        // fall through to Yahoo Finance keyless fallback
+      }
+      const ySymbol = YAHOO_INDEX[instrument.id];
+      if (!ySymbol) return [];
+      const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}`);
+      url.searchParams.set('range', '6mo');
+      url.searchParams.set('interval', '1d');
+      const response = await fetch(url, { signal: AbortSignal.timeout(12_000), headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' } });
+      if (!response.ok) throw new Error(`provider_http_${response.status}`);
+      const payload = await response.json();
+      const timestamps = payload?.chart?.result?.[0]?.timestamp || [];
+      const closes = payload?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+      const rows = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const price = number(closes[i]);
+        if (price == null || price <= 0) continue;
+        rows.push({ time: new Date(Number(timestamps[i]) * 1000).toISOString().slice(0, 10), close: price, closeOnly: true });
+      }
+      return rows.slice(-Math.max(2, outputSize));
     },
   };
 }

@@ -2,8 +2,7 @@
 // CoinGecko's public API blocks Cloudflare Workers shared egress IPs, so we use
 // Coinbase's keyless public endpoint for JPY-denominated spot prices. The
 // provider id is kept for compatibility with instrument definitions.
-const SPOT_BASE = 'https://api.coinbase.com/v2/prices';
-const CANDLES_BASE = 'https://api.exchange.coinbase.com/products';
+const API_BASE = 'https://api.coinbase.com/v2/prices';
 
 function finite(value) {
   const number = Number(value);
@@ -25,7 +24,7 @@ export function createCoinGeckoProvider() {
       await Promise.all(requestedInstruments.map(async (instrument) => {
         const symbol = this.symbolFor(instrument);
         if (!symbol) return;
-        const url = `${SPOT_BASE}/${symbol}-JPY/spot`;
+        const url = `${API_BASE}/${symbol}-JPY/spot`;
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
           if (!response.ok) return;
@@ -49,21 +48,25 @@ export function createCoinGeckoProvider() {
     async getDailyBars(instrument, outputSize = 60) {
       const symbol = this.symbolFor(instrument);
       if (!symbol) return [];
-      const url = new URL(`${CANDLES_BASE}/${symbol}-JPY/candles`);
-      url.searchParams.set('granularity', '86400');
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
+      // Yahoo Finance public chart API (keyless) provides JPY-denominated daily
+      // candles that Cloudflare Workers egress can reach (Coinbase candles 404,
+      // CoinGecko is IP-blocked on Workers).
+      const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}-JPY`);
+      url.searchParams.set('range', '3mo');
+      url.searchParams.set('interval', '1d');
+      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' } });
       if (!response.ok) throw new Error(`provider_http_${response.status}`);
       const payload = await response.json();
-      // Coinbase returns [timestamp, low, high, open, close, volume] newest-first.
-      return (Array.isArray(payload) ? payload : [])
-        .map(([timestamp, , , , close]) => {
-          const price = finite(close);
-          const day = new Date(Number(timestamp) * 1000).toISOString().slice(0, 10);
-          return { time: day, close: price, closeOnly: true };
-        })
-        .filter((row) => row.close != null && row.close > 0)
-        .reverse()
-        .slice(-Math.max(2, outputSize));
+      const timestamps = payload?.chart?.result?.[0]?.timestamp || [];
+      const closes = payload?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+      const rows = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const price = finite(closes[i]);
+        if (price == null || price <= 0) continue;
+        const day = new Date(Number(timestamps[i]) * 1000).toISOString().slice(0, 10);
+        rows.push({ time: day, close: price, closeOnly: true });
+      }
+      return rows.slice(-Math.max(2, outputSize));
     },
   };
 }

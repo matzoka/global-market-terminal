@@ -54,18 +54,18 @@ export function createFrankfurterProvider() {
       const end = new Date();
       const start = new Date(end);
       start.setUTCDate(start.getUTCDate() - Math.max(14, outputSize * 2));
-      const url = new URL('rates', API_BASE);
+      const url = new URL(`${start.toISOString().slice(0, 10)}..${end.toISOString().slice(0, 10)}`, API_BASE);
       url.searchParams.set('base', base);
-      url.searchParams.set('quotes', quote);
-      url.searchParams.set('from', start.toISOString().slice(0, 10));
-      url.searchParams.set('to', end.toISOString().slice(0, 10));
+      url.searchParams.set('symbols', quote);
       url.searchParams.set('providers', 'ECB');
       const response = await fetch(url, { signal: AbortSignal.timeout(12_000), headers: { accept: 'application/json' } });
       if (!response.ok) throw new Error(`provider_http_${response.status}`);
       const payload = await response.json();
-      return (Array.isArray(payload) ? payload : [])
-        .map((row) => ({ time: String(row.date || ''), close: number(row.rate), closeOnly: true }))
-        .filter((row) => row.time && row.close != null).slice(-Math.max(2, outputSize));
+      return (payload?.rates ? Object.entries(payload.rates).map(([date, rateObj]) => ({
+        time: date,
+        close: number(rateObj?.[quote]),
+        closeOnly: true,
+      })) : []).filter((row) => row.time && row.close != null).slice(-Math.max(2, outputSize));
     },
   };
 }

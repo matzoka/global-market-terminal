@@ -23,3 +23,6 @@ Thumbs.db
 *.swo
 .idea/
 .vscode/
+
+# Local wrangler dev secrets (never commit)
+.dev.vars
