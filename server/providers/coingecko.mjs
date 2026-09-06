@@ -1,4 +1,9 @@
-const API_BASE = 'https://api.coingecko.com/api/v3';
+// Crypto quotes via Coinbase public spot-price API (keyless).
+// CoinGecko's public API blocks Cloudflare Workers shared egress IPs, so we use
+// Coinbase's keyless public endpoint for JPY-denominated spot prices. The
+// provider id is kept for compatibility with instrument definitions.
+const SPOT_BASE = 'https://api.coinbase.com/v2/prices';
+const CANDLES_BASE = 'https://api.exchange.coinbase.com/products';
 
 function finite(value) {
   const number = Number(value);
@@ -8,64 +13,57 @@ function finite(value) {
 export function createCoinGeckoProvider() {
   return {
     id: 'COINGECKO_PUBLIC',
-    // The public endpoint is an aggregated market reference. It is not an
-    // execution feed and is intentionally refreshed at a modest cadence.
     minimumRefreshMs: 2 * 60 * 1000,
     supports(instrument) { return instrument.dataProvider === 'coingecko' && Boolean(instrument.coingeckoId); },
-    async getQuotes(requestedInstruments) {
-      if (!requestedInstruments.length) return new Map();
-      const ids = [...new Set(requestedInstruments.map((item) => item.coingeckoId))];
-      const url = new URL('simple/price', `${API_BASE}/`);
-      url.searchParams.set('ids', ids.join(','));
-      url.searchParams.set('vs_currencies', 'jpy');
-      url.searchParams.set('include_24hr_change', 'true');
-      url.searchParams.set('include_last_updated_at', 'true');
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`provider_http_${response.status} ${body.slice(0, 160)}`);
-      }
-      const payload = await response.json();
-      const results = new Map();
-      requestedInstruments.forEach((instrument) => {
-        const raw = payload?.[instrument.coingeckoId] || {};
-        const price = finite(raw.jpy);
-        const change = finite(raw.jpy_24h_change);
-        if (price == null || price <= 0) return;
-        results.set(instrument.id, {
-          instrumentId: instrument.id,
-          price,
-          previousClose: change == null || change <= -99.9 ? null : price / (1 + change / 100),
-          currency: 'JPY',
-          asOf: raw.last_updated_at ? new Date(Number(raw.last_updated_at) * 1000).toISOString() : null,
-          providerSymbol: instrument.displaySymbol || instrument.providerSymbol,
-          status: 'DELAYED',
-          deliveryLabel: 'COINGECKO PUBLIC — AGGREGATED REFERENCE',
-        });
-      });
-      return results;
+    // Map our coingeckoId (e.g. "bitcoin") to the Coinbase product symbol (BTC).
+    symbolFor(instrument) {
+      const map = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', ripple: 'XRP' };
+      return map[instrument.coingeckoId] || null;
     },
-    // CoinGecko publishes a daily price series, not exchange OHLC bars.  Keep
-    // that distinction explicit so the UI can render it as a line reference.
+    async getQuotes(requestedInstruments) {
+      const result = new Map();
+      await Promise.all(requestedInstruments.map(async (instrument) => {
+        const symbol = this.symbolFor(instrument);
+        if (!symbol) return;
+        const url = `${SPOT_BASE}/${symbol}-JPY/spot`;
+        try {
+          const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
+          if (!response.ok) return;
+          const payload = await response.json();
+          const price = finite(payload?.data?.amount);
+          if (price == null || price <= 0) return;
+          result.set(instrument.id, {
+            instrumentId: instrument.id,
+            price,
+            previousClose: null,
+            currency: 'JPY',
+            asOf: new Date().toISOString(),
+            providerSymbol: instrument.displaySymbol || instrument.providerSymbol,
+            status: 'DELAYED',
+            deliveryLabel: 'COINBASE PUBLIC — AGGREGATED REFERENCE',
+          });
+        } catch { /* skip individual failures */ }
+      }));
+      return result;
+    },
     async getDailyBars(instrument, outputSize = 60) {
-      const days = Math.min(365, Math.max(7, Math.ceil(outputSize * 1.8)));
-      const url = new URL(`coins/${encodeURIComponent(instrument.coingeckoId)}/market_chart`, `${API_BASE}/`);
-      url.searchParams.set('vs_currency', 'jpy');
-      url.searchParams.set('days', String(days));
-      url.searchParams.set('interval', 'daily');
+      const symbol = this.symbolFor(instrument);
+      if (!symbol) return [];
+      const url = new URL(`${CANDLES_BASE}/${symbol}-JPY/candles`);
+      url.searchParams.set('granularity', '86400');
       const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`provider_http_${response.status} ${body.slice(0, 160)}`);
-      }
+      if (!response.ok) throw new Error(`provider_http_${response.status}`);
       const payload = await response.json();
-      const byDay = new Map();
-      (Array.isArray(payload?.prices) ? payload.prices : []).forEach(([timestamp, value]) => {
-        const price = finite(value);
-        const day = new Date(Number(timestamp)).toISOString().slice(0, 10);
-        if (price != null && price > 0) byDay.set(day, { time: day, close: price, closeOnly: true });
-      });
-      return [...byDay.values()].slice(-Math.max(2, outputSize));
+      // Coinbase returns [timestamp, low, high, open, close, volume] newest-first.
+      return (Array.isArray(payload) ? payload : [])
+        .map(([timestamp, , , , close]) => {
+          const price = finite(close);
+          const day = new Date(Number(timestamp) * 1000).toISOString().slice(0, 10);
+          return { time: day, close: price, closeOnly: true };
+        })
+        .filter((row) => row.close != null && row.close > 0)
+        .reverse()
+        .slice(-Math.max(2, outputSize));
     },
   };
 }
