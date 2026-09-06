@@ -112,12 +112,21 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **金属の別バックログ項目**: 「P1-CHG-METAL: 金属の日次変動表示（先物系列のみで閉じる別指標『先物前営業日比』として分離設計）」として新規起票を推奨。
 
 ### P1-YEN 円相場影響の可視化（設計案提示→実装）
-- **証拠**: `radar` の `researchPrompt` は「オルカンそのものではない参考値であることと、円相場の影響を確認してください」と書くが、**影響の可視化はゼロ**。ACWI は米国上場 USD 建て ETF なのに円投資家向け JPY 換算・円安/円高感応表示がない。
-- **設計案（実装前に提示）**:
-  - 対象: ACWI（USD建て ETF）＋ 金属（XAU/USD 等）。USDJPY は既に取得済み。
-  - 表示: 詳細/比較に「為替中立ならいくらか」「円±5%でいくらか」の簡易メモ、または「USD 値 × USDJPY」の JPY 目盛り併記。
-  - 判断: 過度な精度（スプレッド等）は出さず、「概ねの円影響」に留める（アプリの provenance 主義と整合）。
-- **見積**: S–M（設計承認後）
+- **状態**: Completed
+- **実装日**: 2026-09-07
+- **採用方針（承認済み）**:
+  - **対象**: ACWI のみ（最小実装）。米国株19銘柄への展開は別ステップ。
+  - **表示**: 詳細ドロワーに「円換算参考変動（ACWI ETF・JPY参考）」を追加。資産要因(USD) / 為替要因(JPY) / 円換算参考 の3項目。
+  - **式**: `(1 + assetReturn) × (1 + fxReturn) − 1`。Alpaca IEX と ECB reference rate の基準時刻が異なるため「近似・参考」として明示。
+  - **期間一致ゲート**: `asset current date == USDJPY current date` **AND** `asset previousClose date == USDJPY previous basis date` の両方一致時のみ表示。一方でも不一致ならセクション非表示。
+  - **provenance**: `assetSource` / `assetCurrentAsOf` / `assetPreviousCloseAsOf` / `fxSource` / `fxCurrentAsOf` / `fxPreviousCloseAsOf` / `formula` / `isReference` を保持。
+  - **誤認防止**: 「オルカン投資信託の基準価額ではありません」「Alpaca IEX と ECB reference rate の基準時刻が異なるため参考値」を UI に明記。
+- **previousCloseAsOf**: `server/providers/alpaca.mjs` で Alpaca snapshot の既存 `prevDailyBar.t` を `previousCloseAsOf` として保持（新規APIアクセスなし）。
+- **basis 一元管理**: P1-CHG の `derivePreviousClose` を `derivePreviousBasis(item) → {close, day}` にリファクタ。変動率計算と P1-YEN 期間判定が同一 basis を参照（FX/暗号の既存動作は維持）。
+- **変更ファイル**: `server/providers/alpaca.mjs`（previousCloseAsOf）、`public/js/adapters.js`（derivePreviousBasis / yenExposure）、`public/js/dashboard.js`（詳細画面セクション）、`test/yen-exposure.mjs`（新規）。
+- **確認結果**: `npm test` 27/27 PASS（既存 17 + P1-CHG 8 + P1-YEN 10）。GitHub main push 済み。Cloudflare 自動 Deploy 確認済み。本番 ACWI に `previousCloseAsOf` 反映済み、期間一致時に円換算参考表示。
+- **将来拡張**: 米国株19銘柄への展開、指数（要取得復旧）、EUR/GBP/HKD 経由の欧州・英国・香港・豪州市場の円影響。
+- **見積**: S–M（設計承認含む）
 
 ### P1-FTSE FTSE 100 のカバー（調査→実装候補）
 - **証拠**: `instruments.mjs` に `FTSE` 登録あり、`eodhd.mjs` の `INDEX_SYMBOLS` に FTSE なし（EODHD INDX リストで解決せず意図的省略）。結果 `UNAVAILABLE/COVERAGE_PENDING` が永続。
