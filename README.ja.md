@@ -218,12 +218,10 @@ npm start            # wrangler dev — Worker + 静的資産をローカルで�
 その後 Wrangler が表示するローカル URL（既定 <http://127.0.0.1:8787>）を開きます。
 ローカルのシークレットはプロジェクトルートの `.env`（Git 除外）から供給でき、Wrangler が `process.env` に注入します。
 
-レガシーなローカル Node 実行（Wrangler なし）:
+レガシーなローカル Node 実行（Wrangler なし、参考用）:
 
 ```sh
-node server/worker.mjs   # Cloudflare では使用しません（参考用）
-```
-PORT=8788 npm start
+node server/worker.mjs   # Cloudflare では使用しません
 ```
 
 ウォッチモード（変更で自動再起動）:

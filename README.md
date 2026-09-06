@@ -84,26 +84,29 @@ aggregation beyond what the configured free providers return.
 Browser (HTML/CSS/JS)
         │  same-origin fetch, /api/v1/*
         ▼
-Node.js application (server/server.mjs)
-        │  reads provider credentials from environment
+Cloudflare Worker (server/worker.mjs) + Static Assets
+        │  reads provider credentials from environment (Worker Secrets / .env for local dev)
         ▼
 Market data providers (pluggable adapters under server/providers/)
 ```
 
 - The browser never calls vendor APIs directly and never holds provider
   credentials.
-- The Node.js server loads provider keys from the process environment (`.env`
-  for local dev, or an out-of-tree environment file for deployment) and proxies
-  all vendor traffic.
-- Provider responses are cached on disk (`data/`, git-ignored) with a short
-  TTL, supporting honest `STALE` handling during upstream failures.
+- The Worker loads provider keys from the process environment (`.env` for local
+  dev via Wrangler, or **Worker Secrets** on Cloudflare) and proxies all vendor
+  traffic.
+- Provider responses are cached in-memory with a short TTL, supporting honest
+  `STALE` handling during upstream failures. On Cloudflare, no disk cache is
+  used.
 
 ---
 
 ## Tech Stack
 
-- **Node.js** (>= 22, native ES modules) — application server and provider
-  adapters. No backend framework; uses the built-in `node:http` server.
+- **Cloudflare Workers** (fetch handler in `server/worker.mjs`) — production
+  runtime with **Static Assets** for the frontend.
+- **Node.js / Wrangler** (>= 22, native ES modules) — local development and
+  deployment tooling.
 - **HTML** — single static `index.html`.
 - **CSS** — hand-written `css/terminal.css` (CRT-style dark theme, no
   frameworks, no external CDNs/fonts).
@@ -143,7 +146,7 @@ Notes:
 
 ## Installation
 
-Prerequisites: **Node.js >= 22**.
+Prerequisites: **Node.js >= 22** and **Wrangler**.
 
 ```sh
 git clone https://github.com/<your-org>/global-market-terminal.git
@@ -156,9 +159,9 @@ Then edit `.env` and fill in the credentials for the providers you want to use
 (see [Configuration](#configuration)). With `MARKET_DATA_PROVIDER=none` the app
 starts safely and shows no prices rather than demo values.
 
-> `npm install` is optional: the project has **no runtime dependencies**
-> (Node.js built-ins only), so `node server/server.mjs` works without it. The
-> install step is harmless and future-proofs the project.
+> `npm install` installs `wrangler`, the only non-optional dependency for local
+> development and deployment. The app itself has **no runtime dependencies**;
+> once deployed, Cloudflare runs the Worker without Node.
 
 ---
 
@@ -169,8 +172,6 @@ your `.env`.** Leave values blank for providers you do not use.
 
 | Variable | Required / Optional | Provider | Purpose |
 | --- | --- | --- | --- |
-| `HOST` | Optional | — | Bind address for local Node runs (default `127.0.0.1`). Ignored on Cloudflare. |
-| `PORT` | Optional | — | Listen port for local Node runs (default `8787`). Ignored on Cloudflare. |
 | `MARKET_DATA_PROVIDER` | Required* | — | `none` \| `alpaca` \| `twelvedata`. Use `none` until a key is configured. |
 | `ALPACA_API_KEY_ID` | Optional | Alpaca | Alpaca API key ID. |
 | `ALPACA_API_SECRET_KEY` | Optional | Alpaca | Alpaca API secret key. |
@@ -185,11 +186,11 @@ your `.env`.** Leave values blank for providers you do not use.
 \* `MARKET_DATA_PROVIDER` is required to be a known value; `none` is the safe
 default that displays no prices.
 
-### Headless / deployment secrets
+### Headless / deployment secrets (legacy/local-only)
 
-The application reads variables from the **process environment** only. For a
-headless deployment (e.g. a systemd user service), inject the same variables
-from an environment file that lives **outside the repository**, for example:
+The application reads variables from the **process environment** only. For
+self-hosted or local runs outside Cloudflare, inject the same variables from an
+environment file that lives **outside the repository**, for example:
 
 ```
 EnvironmentFile=%h/.config/global-market-terminal/runtime.env
@@ -377,8 +378,9 @@ integration handles CI/CD. (Verified: push to `main` → Cloudflare Builds →
   `QUOTE_CACHE_SECONDS`); no disk, KV, or D1 storage is used.
 - The app sends a restrictive CSP and binds only to the Worker's `fetch` handler
   on Cloudflare; there is no loopback port to expose.
-- For a self-hosted Node deployment instead, see the headless-secret notes
-  above and start `node server/worker.mjs` behind an authenticated reverse proxy.
+- For a **self-hosted Node deployment**, see the legacy/local-only note above
+  and start `node server/worker.mjs` behind an authenticated reverse proxy.
+  This is **not** the production path.
 
 ---
 
@@ -393,8 +395,8 @@ integration handles CI/CD. (Verified: push to `main` → Cloudflare Builds →
   requested instrument. Some providers (e.g. EODHD) deliberately omit certain
   indices; those show `UNAVAILABLE` by design.
 
-- **Port already in use**
-  Another process holds the port. Start with `PORT=<other> npm start`.
+- **Port already in use (local dev only):**
+  Another process holds the local dev port. Start with `PORT=<other> npm start`.
 
 - **Provider-side outage**
   Affected instruments fall back to the last cached value as `STALE`, or
