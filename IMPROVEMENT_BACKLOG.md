@@ -100,22 +100,16 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **備考**: `16/16` はアプリ内自動指標ではなくユーザー側受入確認セット。BACKLOG 定義のとおり維持。
 
 ### P1-CHG FX・暗号・金属の日次変動が常に「—」になる
-- **状態**: Open — 実装前に比較基準の設計要件を承認待ち（2件目）
-- **証拠**: `public/js/adapters.js` の `changePercent` は `previousClose` が必須。しかし Frankfurter(FX)・CoinGecko(暗号)・Metals.dev(金属) はいずれも `previousClose: null` を返すため、これらは常に変化率非表示。株（EODHD/Alpaca は previousClose あり）との体験の非対称が目立つ。
-- **調査（previousClose 取得方法と影響範囲）**:
-  - 影響範囲: `researchIds` の fx(5)/crypto(4) ＋ 金属(4) ＝ **13 銘柄**が日次変動非表示。
-  - 現在の `previousClose` ソース: Alpaca=`prevDailyBar.c`、EODHD=系列末尾2本目、他=なし(null)。
-- **⚠ 実装前の設計要件（比較基準の明確化）**:
-  - **原則**: 単純な履歴2本の差ではなく、**「現在値 vs 直前の有効な確定終値」** を日次変動の比較基準とする。
-  - **直前の有効な確定終値の定義（銘柄種別）**:
-    - **FX（Frankfurter/ECB）**: ECB は営業日のみ公表。直前の営業日レートを「有効な確定終値」とする（週末・休場は直前営業日を使う）。比較は「現在値（最新ECBレート）vs 直前営業日レート」。
-    - **暗号（CoinGecko/Coinbase 24h市場）**: 24時間市場のため「日次終値」の概念がない。判定を2案で設計: (a) 提供元の「24h変化率」をそのまま使う（推奨・意味が一致）、(b) 系列の「直前日付けクローズ」を確定終値扱い。どちらを表示方針とするか実装前に決定。
-    - **金属（Metals.dev スポット / Yahoo fallback）**: スポットはほぼ24hだが、系列は日次。EODHD/他指数と同様「直前の有効な日次クローズ」を基準。休場日は直前営業日。
-  - **週末・休場日の扱い（共通）**: 市場が休場の場合は「直前の有効な確定終値」を使い、change は「前営業日比」として表示。休場中の変化率が「0」と見せる誤表示を防ぐ（バッジ/注記で「前営業日比」と明記）。
-  - **提供元へのフォールバック実装**: プロバイダが `previousClose` を返さない場合、取得済み系列（`history`/`bars`）から「直前の有効な確定終値」を算出して付与（新規 egress なし）。
-- **実装案**: 上記設計承認後、フロント `changePercent` にフォールバック（最新値 vs 直前の有効な確定終値）を追加。投資判断レーダーの「期間別変化」にも同基準を適用。
-- **見積**: M（設計承認含む）
-- **順位**: 2件目（1件目 P1-VER 完了後）。
+- **状態**: Completed
+- **実装日**: 2026-09-07
+- **採用方針（承認済み）**:
+  - **FX（A案・採用）**: Frankfurter ECB 現在値 vs `quote.asOf` より前の直近 ECB 営業日終値。`changeBasis=FRANKFURTER_ECB_PREV_BUSINESS_DAY`。表示「前営業日比」。
+  - **暗号（B案・条件付き採用）**: Coinbase Spot 現在値 vs Yahoo Finance 直前確定 UTC 日終値（cross-provider）。`changeBasis=COINBASE_SPOT_VS_YAHOO_PREV_UTC_DAY`。表示「前UTC日比」。内部 metadata で `priceSource=COINBASE_PUBLIC_SPOT` / `basisSource=YAHOO_FINANCE_DAILY` を明示（COINGECKO_PUBLIC の内部互換IDを実態として表示しない）。
+  - **金属（C案・今回実装せず）**: Metals.dev スポット vs Yahoo 先物を混ぜないため、日次変動は「—」維持。**別バックログ項目として残存**。
+- **実装方式**: Backend A（dashboard から dailyBars を新呼び出し）は不採用。既存 `hydrateSparklines` が取得済みの `G.bars[id]` を利用する Frontend B を採用。P1-CHG のため `/dashboard` の外部 egress・初回応答時間は増やさず。
+- **変更ファイル**: `public/js/adapters.js`（derivePreviousClose / changeProvenance 追加）、`public/js/widgets.js`（ラベル表示）、`public/js/dashboard.js`（詳細画面の provenance 注記）、`test/change-previous-close.mjs`（新規テスト）。
+- **確認結果**: `npm test` 17/17 PASS（既存 9 + 新規 8）。GitHub main push 済み。Cloudflare 自動 Deploy 確認済み。本番 `instrumentCount: 43`・`UNAVAILABLE: FTSE` 維持。
+- **金属の別バックログ項目**: 「P1-CHG-METAL: 金属の日次変動表示（先物系列のみで閉じる別指標『先物前営業日比』として分離設計）」として新規起票を推奨。
 
 ### P1-YEN 円相場影響の可視化（設計案提示→実装）
 - **証拠**: `radar` の `researchPrompt` は「オルカンそのものではない参考値であることと、円相場の影響を確認してください」と書くが、**影響の可視化はゼロ**。ACWI は米国上場 USD 建て ETF なのに円投資家向け JPY 換算・円安/円高感応表示がない。
@@ -206,3 +200,15 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **推奨: 案B（検証用途）を基本とし、必要なら案Aは別の `acceptance` モジュールとして製品ロジックと分離**。現時点では急がず、P1-VER で「16/16 はユーザー側受入セット（アプリ内自動指標ではない）」と BACKLOG に定義済み。実装時にどちらで固定するか決定。
 
 > 2件目: **P1-CHG**（日次変動「—」）。実装前に上記「比較基準の設計要件（現在値 vs 直前の有効な確定終値・週末/休場/24h市場の扱い）」を承認すること。
+
+---
+
+## P1-CHG-METAL — 金属の日次変動表示（別バックログ項目・未着手）
+
+- **状態**: Proposed
+- **背景**: P1-CHG では金属を「—」維持とした（Metals.dev スポット vs Yahoo 先物を混ぜない方針）。
+- **方針（案）**: スポット/先物を混ぜず、**先物系列のみで閉じる別指標「先物前営業日比」** として分離表示。比較は `bars`（Yahoo 先物 `GC=F` 等）内で完結させ、quote.price（スポット）は使わない。
+- **表示**: 「先物前営業日比 +x.xx%」と明記し、スポット現在値とは別レイヤーにする。
+- **provenance**: `priceSource=YAHOO_FINANCE_FUTURES` / `basisSource=YAHOO_FINANCE_FUTURES` / `changeBasis=YAHOO_FUTURES_PREV_BUSINESS_DAY`。
+- **リスク**: 先物とスポットの乖離を「同一商品」と誤認させない注記が必須。
+- **見積**: S
