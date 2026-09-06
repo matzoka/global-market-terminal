@@ -38,6 +38,7 @@ function normaliseQuote(instrument, raw) {
     instrumentId: instrument.id,
     price,
     previousClose: number(previous?.c),
+    previousCloseAsOf: asIso(previous?.t),   // actual prevDailyBar timestamp (P1-YEN)
     currency: 'USD',
     asOf: asIso(trade?.t ?? daily?.t),
     providerSymbol: instrument.alpacaSymbol,

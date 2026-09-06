@@ -46,6 +46,20 @@ window.GMT = window.GMT || {};
     );
     if (changeNote) grid.append(detailField('日次変動の注意', changeNote));
     detailContent.appendChild(grid);
+    var yen = G.yenExposure(item);
+    if (yen && yen.applicable) {
+      var pct = function (v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; };
+      var day = function (iso) { return (iso || '').slice(0, 10); };
+      var yenSection = detailElement('section', 'detail-grid detail-yen');
+      yenSection.append(
+        detailElement('div', 'detail-section-title', '円換算参考変動（ACWI ETF・JPY参考）'),
+        detailField('資産要因(USD)', pct(yen.assetReturn.value) + ' ・ ' + (yen.assetReturn.source || '—') + ' ・ 基準 ' + day(yen.assetReturn.currentAsOf)),
+        detailField('為替要因(JPY)', pct(yen.fxReturn.value) + ' ・ ' + (yen.fxReturn.source || '—') + ' ・ 基準 ' + day(yen.fxReturn.currentAsOf)),
+        detailField('円換算参考', pct(yen.yenReturn.value) + ' ・ ' + yen.yenReturn.formula + (yen.yenReturn.isApproximate ? '（近似・参考）' : '')),
+        detailField('注意', 'オルカン投資信託の基準価額ではありません。Alpaca IEX と ECB reference rate の基準時刻が異なるため参考値です。')
+      );
+      detailContent.appendChild(yenSection);
+    }
     var trend = detailElement('section', 'detail-trend'), trendTitle = detailElement('div', 'detail-section-title', '確認済み価格の推移'), trendNote = detailElement('div', 'detail-note', history.length >= 2 ? '確認済み ' + history.length + ' 点 ・ 表示専用' : detailBarsLoading[id] ? '確認済みの日足系列を取得中…' : detailBarsUnavailable[id] ? '現在の提供元から確認済みの日足系列は取得できません。' : 'この銘柄・指数に確認済みの価格系列はありません。');
     trend.appendChild(trendTitle);
     if (history.length >= 2) { var canvas = document.createElement('canvas'); canvas.width = 376; canvas.height = 88; drawDetailTrend(canvas, history, !Number.isFinite(change) || change >= 0); trend.appendChild(canvas); }
