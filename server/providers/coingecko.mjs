@@ -20,8 +20,11 @@ export function createCoinGeckoProvider() {
       url.searchParams.set('vs_currencies', 'jpy');
       url.searchParams.set('include_24hr_change', 'true');
       url.searchParams.set('include_last_updated_at', 'true');
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error(`provider_http_${response.status}`);
+      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`provider_http_${response.status} ${body.slice(0, 160)}`);
+      }
       const payload = await response.json();
       const results = new Map();
       requestedInstruments.forEach((instrument) => {
@@ -50,8 +53,11 @@ export function createCoinGeckoProvider() {
       url.searchParams.set('vs_currency', 'jpy');
       url.searchParams.set('days', String(days));
       url.searchParams.set('interval', 'daily');
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error(`provider_http_${response.status}`);
+      const response = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', 'user-agent': 'global-market-terminal' } });
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`provider_http_${response.status} ${body.slice(0, 160)}`);
+      }
       const payload = await response.json();
       const byDay = new Map();
       (Array.isArray(payload?.prices) ? payload.prices : []).forEach(([timestamp, value]) => {
