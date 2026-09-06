@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>GMT-1 // 投資先レーダー</title>
+<link rel="stylesheet" href="css/terminal.css">
+</head>
+<body>
+<div class="crt-overlay" aria-hidden="true"></div>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="cursor-block" aria-hidden="true"></span>
+    <span class="brand-name">GMT-1 // 投資先レーダー</span>
+    <span class="brand-ver">v4.0.0</span>
+  </div>
+  <div class="status-cluster">
+    <span id="conn-badge" class="badge badge-down" title="市場データの接続状態">&#9679; データ未取得</span>
+    <span id="utc-clock" class="utc-clock" title="協定世界時">--:--:-- UTC</span>
+    <span id="last-update" class="utc-clock" title="最終更新時刻">更新 --</span>
+    <button id="btn-refresh" class="tbtn" type="button" title="市場データを今すぐ更新">更新</button>
+    <button id="btn-reset" class="tbtn" type="button" title="パネル配置を初期状態に戻す">配置を戻す</button>
+  </div>
+</header>
+
+<div id="boot-log" class="boot-log" aria-live="polite"></div>
+
+<main id="board" class="board" aria-label="投資候補を比較する市場情報パネル">
+
+  <section class="panel universe-panel" data-widget="universe" data-span="12">
+    <header class="panel-head">
+      <span class="grip" title="ドラッグして移動">&#x28FF;</span>
+      <span class="panel-title">注目市場 &mdash; 世界株・為替・暗号資産</span>
+      <span class="panel-tag">RADAR</span>
+      <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
+    </header>
+    <div class="panel-body" id="w-universe"></div>
+  </section>
+
+  <section class="panel selected-chart-panel" data-widget="chart" data-span="8">
+    <header class="panel-head">
+      <span class="grip" title="ドラッグして移動">&#x28FF;</span>
+      <span class="panel-title" id="selected-chart-title">選択中の推移</span>
+      <span class="panel-tag" id="selected-chart-tag">&mdash;</span>
+      <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
+    </header>
+    <div class="panel-body" id="w-chart">
+      <div class="chart-toolbar" role="group" aria-label="チャートの表示期間">
+        <span id="selected-chart-summary" class="chart-summary">対象を選択してください</span>
+        <div class="chart-ranges">
+          <button class="range-btn" type="button" data-limit="5">1週</button>
+          <button class="range-btn" type="button" data-limit="22">1か月</button>
+          <button class="range-btn is-active" type="button" data-limit="60">3か月</button>
+          <button class="range-btn" type="button" data-limit="250">1年</button>
+        </div>
+      </div>
+      <div class="research-chart-wrap">
+        <canvas id="research-canvas" height="340" aria-label="選択した投資候補の確認済み日足チャート"></canvas>
+        <div id="chart-tooltip" class="chart-tooltip" aria-hidden="true"></div>
+      </div>
+      <p id="selected-chart-note" class="panel-note">候補を選択すると、確認済みの日足データを表示します。</p>
+    </div>
+  </section>
+
+  <section class="panel radar-panel" data-widget="radar" data-span="4">
+    <header class="panel-head">
+      <span class="grip" title="ドラッグして移動">&#x28FF;</span>
+      <span class="panel-title">判断レーダー</span>
+      <span class="panel-tag" id="radar-tag">&mdash;</span>
+      <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
+    </header>
+    <div class="panel-body" id="w-radar"></div>
+  </section>
+
+  <section class="panel compare-panel" data-widget="compare" data-span="12">
+    <header class="panel-head">
+      <span class="grip" title="ドラッグして移動">&#x28FF;</span>
+      <span class="panel-title">候補を比べる</span>
+      <span class="panel-tag">SELECT</span>
+      <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
+    </header>
+    <div class="panel-body" id="w-compare"></div>
+  </section>
+
+  <section class="panel clocks-panel fixed-panel" data-widget="clocks" data-span="12">
+    <header class="panel-head">
+      <span class="panel-title">世界市場時計</span>
+      <span class="panel-tag">TZ</span>
+    </header>
+    <div class="panel-body" id="w-clocks"></div>
+  </section>
+
+</main>
+
+<aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="false" aria-hidden="true" aria-labelledby="detail-drawer-title">
+  <header class="detail-head">
+    <span id="detail-drawer-title" class="detail-title">注目対象の詳細</span>
+    <button id="btn-detail-close" class="detail-close" type="button" aria-label="注目対象の詳細を閉じる">閉じる [ESC]</button>
+  </header>
+  <div id="detail-content" class="detail-content" aria-live="polite"></div>
+</aside>
+
+<footer id="statusline">
+  <span id="status-msg">市場データへ接続中…</span>
+  <span class="footer-right">閲覧専用 &mdash; 出所・遅延・基準時刻は各バッジで確認</span>
+</footer>
+
+<script src="js/adapters.js"></script>
+<script src="js/widgets.js"></script>
+<script src="js/dashboard.js"></script>
+</body>
+</html>
