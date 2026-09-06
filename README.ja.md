@@ -55,15 +55,15 @@ Global Market Terminal は **閲覧専用の市場観察ダッシュボード** 
 Browser (HTML/CSS/JS)
         │  same-origin fetch, /api/v1/*
         ▼
-Node.js application (server/server.mjs)
-        │  reads provider credentials from environment
+Cloudflare Worker (server/worker.mjs) + Static Assets
+        │  reads provider credentials from environment (Worker Secrets)
         ▼
 Market data providers (pluggable adapters under server/providers/)
 ```
 
 - ブラウザはベンダー API を直接呼ばず、プロバイダーの認証情報も保持しません。
-- Node.js サーバーはプロバイダーキーをプロセス環境（ローカル開発は `.env`、デプロイはリポジトリ外の環境ファイル）から読み込み、全ベンダー通信をプロキシします。
-- プロバイダー応答は短い TTL でディスク（`data/`、Git 除外）にキャッシュされ、上流障害時の正直な `STALE` 処理を支えます。
+- Worker はプロバイダーキーをプロセス環境（ローカル開発は `.env`、Cloudflare では Worker Secrets）から読み込み、全ベンダー通信をプロキシします。
+- プロバイダー応答は短い TTL でメモリ内キャッシュに保持され、上流障害時は最後に取得成功した値を `STALE` として表示します（Cloudflare 版はディスクを使用しません）。
 
 ---
 
@@ -111,7 +111,7 @@ cp .env.example .env
 
 その後 `.env` を編集し、利用したいプロバイダーの認証情報を入力します（[設定](#設定) 参照）。`MARKET_DATA_PROVIDER=none` のままなら、デモ値ではなく何も価格を表示せずに安全に起動します。
 
-> `npm install` は任意です。本プロジェクトは **ランタイム依存関係なし**（Node.js 組み込みのみ）のため、`npm install` なしでも `node server/server.mjs` で動きます。インストール手順は無害で、将来の拡張にも備えられます。
+> `npm install` は任意です。本プロジェクトは **ランタイム依存関係なし**（Node.js 組み込みのみ）のため、ローカル Node 実行なしでも Wrangler で動きます。Wrangler は devDependency として追加されています。
 
 ---
 
@@ -144,6 +144,8 @@ cp .env.example .env
 EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 ```
 
+**Cloudflare Workers** では、同じ変数名を **Worker Secrets** として設定します（`wrangler secret put <名前>` または Cloudflare ダッシュボード）。Secrets は実行時に自動的に `process.env` へ注入され、`.env` ファイルは読み込まれません。
+
 `runtime.env` およびあらゆる `.env` はバージョン管理外に置かなければなりません。アプリはプロセス環境以外のシークレットをファイルシステムから読み取りません。
 
 ---
@@ -165,17 +167,20 @@ EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 
 ```
 .
-├── index.html              # 静的ダッシュボードシェル
-├── css/
-│   └── terminal.css        # CRT 風テーマ（フレームワーク/CDN なし）
-├── js/
-│   ├── adapters.js         # ブラウザデータクライアント（同一オリジン API）
-│   ├── widgets.js          # リサーチウィジェット（universe, chart, radar, compare, clocks）
-│   └── dashboard.js        # 起動、配置永続化、データ状態
+├── public/                 # Cloudflare Static Assets で配信される静的資産
+│   ├── index.html          # 静的ダッシュボードシェル
+│   ├── css/
+│   │   └── terminal.css    # CRT 風テーマ（フレームワーク/CDN なし）
+│   ├── js/
+│   │   ├── adapters.js     # ブラウザデータクライアント（同一オリジン API）
+│   │   ├── widgets.js      # リサーチウィジェット（universe, chart, radar, compare, clocks）
+│   │   └── dashboard.js    # 起動、配置永続化、データ状態
+│   └── assets/
+│       └── fonts/          # 同梱 M PLUS 1 Code（SIL OFL 1.1）
 ├── server/
-│   ├── server.mjs          # Node.js HTTP サーバー + API ルート
+│   ├── worker.mjs          # Cloudflare Worker エントリ（fetch handler + API ルート）
 │   ├── config.mjs          # 環境駆動の設定
-│   ├── market-service.mjs  # 相場/ローソク足オーケストレーション + ディスクキャッシュ
+│   ├── market-service.mjs  # 相場/ローソク足オーケストレーション + メモリ内キャッシュ
 │   ├── instruments.mjs     # 銘柄レジストリ
 │   └── providers/          # プラガブルなプロバイダーアダプター
 │       ├── alpaca.mjs
@@ -188,8 +193,7 @@ EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 │   └── verify-provider.mjs # 読み取り専用のプロバイダー事前確認
 ├── test/
 │   └── market-service.test.mjs
-├── assets/
-│   └── fonts/              # 同梱 M PLUS 1 Code（SIL OFL 1.1）
+├── wrangler.jsonc          # Cloudflare Workers 設定
 ├── .env.example            # テンプレート（シークレットなし）
 ├── .gitignore
 └── README.md
@@ -197,24 +201,28 @@ EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 
 補足:
 
-- `data/` と `output/` は実行時に作成され、Git から除外されます。
-- `node_modules/` は不要（ランタイム依存ゼロ）ですが、念のため除外されています。
+- `data/` と `output/` は Cloudflare 版では使用しません（Worker はメモリ内キャッシュのみ）。ローカル Node 実行では作成される場合があり、Git から除外されます。
+- `node_modules/` は実行時には不要（ランタイム依存ゼロ）ですが、念のため除外されています。`wrangler` はローカル開発/デプロイ用の devDependency として追加されています。
 
 ---
 
 ## 起動方法
 
-開発 / ローカル起動:
+Wrangler でのローカル開発（推奨）:
 
 ```sh
-npm start            # node server/server.mjs, 既定 127.0.0.1:8787 に束縛
+npm install          # wrangler をインストール（devDependency）
+npm start            # wrangler dev — Worker + 静的資産をローカルで配信
 ```
 
-その後 <http://127.0.0.1:8787> を開きます。
+その後 Wrangler が表示するローカル URL（既定 <http://127.0.0.1:8787>）を開きます。
+ローカルのシークレットはプロジェクトルートの `.env`（Git 除外）から供給でき、Wrangler が `process.env` に注入します。
 
-既定 port が使用中の場合:
+レガシーなローカル Node 実行（Wrangler なし）:
 
 ```sh
+node server/worker.mjs   # Cloudflare では使用しません（参考用）
+```
 PORT=8788 npm start
 ```
 
@@ -246,14 +254,53 @@ npm test
 
 ## デプロイ
 
-Global Market Terminal は **外部依存なし**、**データベースなし** の単一 Node.js プロセスです。Node.js >= 22 が利用可能な任意の環境へデプロイできます:
+Global Market Terminal は **Static Assets** 付きの単一 **Cloudflare Worker** として稼働します。ビルド工程・フレームワーク・データベースは不要です。
 
-- プロジェクトをホストへコピーします。
-- プロバイダー認証情報をプロセス環境経由で提供します（ローカルは `.env`、本番はリポジトリ外の `runtime.env` / プラットフォームシークレットストレージ）。
-- `node server/server.mjs` を起動します（例: systemd user service またはコンテナ配下）。
-- ループバックに束縛し、認証付きリバースプロキシ経由で HTTPS でフロントエンドを公開します。認証なしで生 port を公開してはいけません。
+### 前提条件
 
-現時点では Cloudflare Workers 等のサーバーレスアダプターは設定されていません。
+- Cloudflare アカウント（Free プランで十分）。
+- ローカルに `wrangler` をインストール（`npm install` で devDependency として追加）。
+- Cloudflare 認証済み（`wrangler login` または `wrangler login --device`）。
+
+### シークレットの設定
+
+`.env.example` と同じ変数名を **Worker Secrets** として設定します。Secrets は実行時に `process.env` へ注入され、コミットしてはいけません。
+
+```sh
+wrangler secret put ALPACA_API_KEY_ID
+wrangler secret put ALPACA_API_SECRET_KEY
+wrangler secret put EODHD_API_TOKEN
+wrangler secret put METALS_DEV_API_KEY
+wrangler secret put MARKET_DATA_PROVIDER   # 例: "alpaca"
+```
+
+`TWELVE_DATA_API_KEY` は任意（ライセンスプランのみ）。
+
+### 手動デプロイ
+
+```sh
+wrangler deploy
+```
+
+これにより `public/` が Static Assets として、`server/worker.mjs` が fetch handler としてアップロードされます。Worker は `https://<worker-name>.<subdomain>.workers.dev` で利用可能になります。
+
+### GitHub からの自動デプロイ
+
+GitHub リポジトリを Cloudflare Workers Builds に接続します:
+
+1. Cloudflare Dashboard → **Workers & Pages** → 該当 Worker → **Settings** →
+   **Builds**（または **Git integration**）。
+2. GitHub App をインストールし、`matzoka/global-market-terminal` リポジトリを承認します。
+3. 本番ブランチを **`main`** に設定します。
+4. Build command: _（なし — ビルド工程不要）_; Deploy command: `wrangler deploy`。
+
+接続後、 `main` への push ごとに Cloudflare が自動でビルド・デプロイします。GitHub Actions ワークフローは不要です — Cloudflare のネイティブな Git 連携が CI/CD を担います。
+
+### 補足
+
+- Worker は相場/ローソク足を **メモリ内キャッシュ** に保持します（TTL は `QUOTE_CACHE_SECONDS` で制御）。ディスク・KV・D1 は使用しません。
+- アプリは厳格な CSP を送信し、Cloudflare 上では Worker の `fetch` handler のみに束縛されます。公開すべきループバック port はありません。
+- 代わりに自前ホストの Node デプロイを行う場合は、上記のヘッドレスシークレットの注意を参照し、`node server/worker.mjs` を認証付きリバースプロキシ配下で起動してください。
 
 ---
 
@@ -266,7 +313,7 @@ Global Market Terminal は **外部依存なし**、**データベースなし**
   キーが正しく期限切れでないこと、無料プランが要求銘柄をカバーしていることを確認します。一部のプロバイダー（例: EODHD）は意図的に特定の指数を除外します。それらは設計上 `UNAVAILABLE` と表示されます。
 
 - **Port が使用中**
-  別プロセスが port を占有しています。`PORT=<other> npm start` で起動してください。
+  別プロセスが port を占有しています。Wrangler の場合は別 port を指定してください（`wrangler dev --port <other>`）。
 
 - **プロバイダー側障害**
   該当銘柄は最後のキャッシュ値を `STALE` としてフォールバック、あるいは取得履歴がなければ `UNAVAILABLE` になります。残りのダッシュボードは動作し続けます。
@@ -293,7 +340,7 @@ Global Market Terminal は **外部依存なし**、**データベースなし**
   [Metals.dev](https://metals.dev)、
   [CoinGecko](https://www.coingecko.com)、
   [Frankfurter](https://frankfurter.dev)（ECB リファレンスレート）。
-- **フォント**: [M PLUS 1 Code](https://github.com/coz-m/MPLUS_FONTS)（M+ FONTS Project Authors、SIL Open Font License 1.1 でライセンス、[`assets/fonts/OFL.txt`](assets/fonts/OFL.txt) 参照）。フォントは OFL の下で再配布され、アプリケーションコードは別ライセンスです（[LICENSE](LICENSE) 参照）。
+- **フォント**: [M PLUS 1 Code](https://github.com/coz-m/MPLUS_FONTS)（M+ FONTS Project Authors、SIL Open Font License 1.1 でライセンス、[`public/assets/fonts/OFL.txt`](public/assets/fonts/OFL.txt) 参照）。フォントは OFL の下で再配布され、アプリケーションコードは別ライセンスです（[LICENSE](LICENSE) 参照）。
 
 ---
 

@@ -5,12 +5,16 @@
   "description": "Read-only market terminal with provenance-aware market data: global equities, indices, FX, crypto, and metals in one screen.",
   "type": "module",
   "scripts": {
-    "start": "node server/server.mjs",
-    "dev": "node --watch server/server.mjs",
+    "start": "wrangler dev",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
     "test": "node --test",
     "verify:provider": "node scripts/verify-provider.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.129.0"
   }
 }

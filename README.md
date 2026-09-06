@@ -169,8 +169,8 @@ your `.env`.** Leave values blank for providers you do not use.
 
 | Variable | Required / Optional | Provider | Purpose |
 | --- | --- | --- | --- |
-| `HOST` | Optional | — | Bind address (default `127.0.0.1`). |
-| `PORT` | Optional | — | Listen port (default `8787`). |
+| `HOST` | Optional | — | Bind address for local Node runs (default `127.0.0.1`). Ignored on Cloudflare. |
+| `PORT` | Optional | — | Listen port for local Node runs (default `8787`). Ignored on Cloudflare. |
 | `MARKET_DATA_PROVIDER` | Required* | — | `none` \| `alpaca` \| `twelvedata`. Use `none` until a key is configured. |
 | `ALPACA_API_KEY_ID` | Optional | Alpaca | Alpaca API key ID. |
 | `ALPACA_API_SECRET_KEY` | Optional | Alpaca | Alpaca API secret key. |
@@ -194,6 +194,10 @@ from an environment file that lives **outside the repository**, for example:
 ```
 EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 ```
+
+On **Cloudflare Workers**, set the same variable names as **Worker Secrets**
+(`wrangler secret put <NAME>` or the Cloudflare dashboard). Secrets are injected
+into `process.env` automatically at runtime — no `.env` file is read.
 
 `runtime.env` and any `.env` must stay out of version control. The app performs
 no filesystem reads of secrets beyond the process environment.
@@ -223,17 +227,20 @@ no filesystem reads of secrets beyond the process environment.
 
 ```
 .
-├── index.html              # Static dashboard shell
-├── css/
-│   └── terminal.css        # CRT-style theme (no frameworks/CDNs)
-├── js/
-│   ├── adapters.js         # Browser data client (same-origin API)
-│   ├── widgets.js          # Research widgets (universe, chart, radar, compare, clocks)
-│   └── dashboard.js        # Boot, layout persistence, data state
+├── public/                 # Static assets served by Cloudflare Static Assets
+│   ├── index.html          # Static dashboard shell
+│   ├── css/
+│   │   └── terminal.css    # CRT-style theme (no frameworks/CDNs)
+│   ├── js/
+│   │   ├── adapters.js     # Browser data client (same-origin API)
+│   │   ├── widgets.js      # Research widgets (universe, chart, radar, compare, clocks)
+│   │   └── dashboard.js    # Boot, layout persistence, data state
+│   └── assets/
+│       └── fonts/          # Bundled M PLUS 1 Code (SIL OFL 1.1)
 ├── server/
-│   ├── server.mjs          # Node.js HTTP server + API routes
+│   ├── worker.mjs          # Cloudflare Worker entry (fetch handler + API routes)
 │   ├── config.mjs          # Environment-driven configuration
-│   ├── market-service.mjs  # Quote/bar orchestration + disk cache
+│   ├── market-service.mjs  # Quote/bar orchestration + in-memory cache
 │   ├── instruments.mjs     # Instrument registry
 │   └── providers/          # Pluggable provider adapters
 │       ├── alpaca.mjs
@@ -246,8 +253,7 @@ no filesystem reads of secrets beyond the process environment.
 │   └── verify-provider.mjs # Read-only provider preflight check
 ├── test/
 │   └── market-service.test.mjs
-├── assets/
-│   └── fonts/              # Bundled M PLUS 1 Code (SIL OFL 1.1)
+├── wrangler.jsonc          # Cloudflare Workers configuration
 ├── .env.example            # Template (no secrets)
 ├── .gitignore
 └── README.md
@@ -255,26 +261,31 @@ no filesystem reads of secrets beyond the process environment.
 
 Notes:
 
-- `data/` and `output/` are created at runtime and are git-ignored.
-- `node_modules/` is not required (zero runtime dependencies) but is ignored
-  regardless.
+- `data/` and `output/` are not used on Cloudflare; the Worker keeps an
+  in-memory cache only. They may still be created by local Node runs and are
+  git-ignored.
+- `node_modules/` is not required for runtime (zero runtime dependencies) but is
+  ignored regardless. `wrangler` is a devDependency used for local dev/deploy.
 
 ---
 
 ## Running
 
-Development / local start:
+Local development with Wrangler (recommended):
 
 ```sh
-npm start            # node server/server.mjs, binds 127.0.0.1:8787 by default
+npm install          # installs wrangler (devDependency)
+npm start            # wrangler dev — serves the Worker + static assets locally
 ```
 
-Then open <http://127.0.0.1:8787>.
+Then open the local URL Wrangler prints (defaults to <http://127.0.0.1:8787>).
+Local secrets can be supplied via a `.env` file in the project root (git-ignored);
+Wrangler injects them as `process.env`.
 
-If the default port is busy:
+Legacy local Node run (without Wrangler):
 
 ```sh
-PORT=8788 npm start
+node server/worker.mjs   # not used on Cloudflare; kept for reference only
 ```
 
 Watch mode (auto-restart on change):
@@ -309,19 +320,64 @@ endpoints or random price generators.
 
 ## Deployment
 
-Global Market Terminal is a single Node.js process with **no external
-dependencies** and **no database**. It can be deployed to any environment where
-Node.js >= 22 is available:
+Global Market Terminal runs as a single **Cloudflare Worker** with **Static
+Assets** for the frontend — no build step, no framework, no database.
 
-- Copy the project to the host.
-- Provide provider credentials via the process environment (`.env` for local,
-  an out-of-tree `runtime.env` / platform secret storage for production).
-- Start `node server/server.mjs` (for example, under a systemd user service or
-  a container).
-- Bind to loopback and expose the frontend through an authenticated reverse
-  proxy with HTTPS. Do not expose the raw port publicly without authentication.
+### Prerequisites
 
-No Cloudflare Workers or other serverless adapter is configured at this time.
+- A Cloudflare account (Free plan is sufficient).
+- `wrangler` installed locally (`npm install` adds it as a devDependency).
+- Cloudflare authenticated (`wrangler login` or `wrangler login --device`).
+
+### Set secrets
+
+Set the same variable names used in `.env.example` as **Worker Secrets**. Secrets
+are injected into `process.env` at runtime; never commit them.
+
+```sh
+wrangler secret put ALPACA_API_KEY_ID
+wrangler secret put ALPACA_API_SECRET_KEY
+wrangler secret put EODHD_API_TOKEN
+wrangler secret put METALS_DEV_API_KEY
+wrangler secret put MARKET_DATA_PROVIDER   # e.g. "alpaca"
+```
+
+`TWELVE_DATA_API_KEY` is optional (licensed plan only).
+
+### Deploy manually
+
+```sh
+wrangler deploy
+```
+
+This uploads `public/` as Static Assets and the Worker entry
+(`server/worker.mjs`) as the fetch handler. The Worker is available at
+`https://<worker-name>.<subdomain>.workers.dev`.
+
+### Automatic deploy from GitHub
+
+Connect the GitHub repository to Cloudflare Workers Builds:
+
+1. Cloudflare Dashboard → **Workers & Pages** → your Worker → **Settings** →
+   **Builds** (or **Git integration**).
+2. Install the GitHub App and authorize the `matzoka/global-market-terminal`
+   repository.
+3. Set the production branch to **`main`**.
+4. Build command: _(none — no build step needed)_; Deploy command:
+   `wrangler deploy`.
+
+After connecting, every push to `main` triggers Cloudflare to build and deploy
+automatically. No GitHub Actions workflow is required — Cloudflare's native Git
+integration handles CI/CD.
+
+### Notes
+
+- The Worker keeps an **in-memory cache** for quotes and bars (TTL governed by
+  `QUOTE_CACHE_SECONDS`); no disk, KV, or D1 storage is used.
+- The app sends a restrictive CSP and binds only to the Worker's `fetch` handler
+  on Cloudflare; there is no loopback port to expose.
+- For a self-hosted Node deployment instead, see the headless-secret notes
+  above and start `node server/worker.mjs` behind an authenticated reverse proxy.
 
 ---
 

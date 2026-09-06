@@ -47,7 +47,7 @@ test('free Metals.Dev adapter covers all four cards and is quota limited', async
 });
 
 test('production browser code contains no vendor endpoint or random price generator', async () => {
-  const source = await Promise.all(['js/adapters.js', 'js/widgets.js', 'js/dashboard.js'].map((file) => readFile(file, 'utf8')));
+  const source = await Promise.all(['public/js/adapters.js', 'public/js/widgets.js', 'public/js/dashboard.js'].map((file) => readFile(file, 'utf8')));
   const joined = source.join('\n').toLowerCase();
   ['quote.cnbc.com', 'math.random', 'gensesions', 'seeded random-walk'].forEach((forbidden) => assert.equal(joined.includes(forbidden), false, forbidden));
 });

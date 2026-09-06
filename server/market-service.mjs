@@ -1,6 +1,3 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { config, primaryProviderReady } from './config.mjs';
 import { instruments, byId, indexIds, metalIds, sectorIds, researchIds } from './instruments.mjs';
 import { createAlpacaProvider } from './providers/alpaca.mjs';
@@ -10,11 +7,8 @@ import { createTwelveDataProvider } from './providers/twelvedata.mjs';
 import { createCoinGeckoProvider } from './providers/coingecko.mjs';
 import { createFrankfurterProvider } from './providers/frankfurter.mjs';
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'data');
-const cachePath = join(dataDir, 'cache.json');
 let snapshots = new Map();
 let bars = new Map();
-let loaded = false;
 let lastRefreshAt = 0;
 const barRequests = new Map();
 const barCacheMs = 15 * 60 * 1000;
@@ -59,22 +53,6 @@ function unavailable(instrument, reason) {
 }
 function displayStatus(instrument, quote) { return quote.status || qualityFor(instrument.id); }
 
-async function loadCache() {
-  if (loaded) return;
-  loaded = true;
-  try {
-    const saved = JSON.parse(await readFile(cachePath, 'utf8'));
-    snapshots = new Map(Object.entries(saved.snapshots || {}));
-    bars = new Map(Object.entries(saved.bars || {}));
-  } catch { /* first launch or unreadable cache: remain empty */ }
-}
-async function saveCache() {
-  await mkdir(dataDir, { recursive: true });
-  const payload = JSON.stringify({ savedAt: now(), snapshots: Object.fromEntries(snapshots), bars: Object.fromEntries(bars) });
-  const tempPath = `${cachePath}.tmp`;
-  await writeFile(tempPath, payload, { encoding: 'utf8', mode: 0o600 });
-  await rename(tempPath, cachePath);
-}
 function primaryFreshEnough() { return Date.now() - lastRefreshAt < config.quoteCacheSeconds * 1000; }
 function providerLastSuccess(provider) {
   return instruments.filter((item) => provider.supports(item)).reduce((latest, item) => {
@@ -98,7 +76,6 @@ function retainOrMarkUnavailable(instrument, reason, receivedAt) {
 }
 
 async function refreshQuotes(force = false) {
-  await loadCache();
   if (!force && primaryFreshEnough()) return;
   lastRefreshAt = Date.now();
   let attempted = false;
@@ -123,7 +100,6 @@ async function refreshQuotes(force = false) {
     }
   }
   instruments.filter((item) => !providerFor(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));
-  if (attempted) await saveCache().catch((error) => console.error(JSON.stringify({ event: 'cache_write_failed', message: error.message })));
 }
 
 export async function dashboard(force = false) {
@@ -139,7 +115,6 @@ export async function dashboard(force = false) {
 export async function dailyBars(id, outputSize = 60) {
   const instrument = byId.get(id);
   if (!instrument) return null;
-  await loadCache();
   const provider = barsProviderFor(instrument);
   if (!provider || typeof provider.getDailyBars !== 'function') return { instrumentId: id, provider: provider?.id || 'NOT_CONFIGURED', status: 'UNAVAILABLE', bars: [], reason: 'not_covered_by_configured_sources' };
   const requestedLimit = Math.min(500, Math.max(2, Number.parseInt(outputSize, 10) || 60));
@@ -154,7 +129,6 @@ export async function dailyBars(id, outputSize = 60) {
       const deliveryLabel = provider.id === 'ALPACA_IEX' ? 'IEX DAILY BARS — SINGLE U.S. EXCHANGE' : provider.id === 'COINGECKO_PUBLIC' ? 'COINGECKO DAILY PRICE — AGGREGATED REFERENCE' : provider.id === 'FRANKFURTER_ECB' ? 'FRANKFURTER — ECB DAILY REFERENCE' : null;
       const response = { instrumentId: id, provider: provider.id, status, deliveryLabel, receivedAt: now(), requestedLimit, bars: result };
       bars.set(id, response);
-      await saveCache().catch(() => {});
       return response;
     } catch (error) {
       if (previous?.bars?.length) return { ...previous, status: 'STALE', receivedAt: now(), reason: 'provider_request_failed' };
