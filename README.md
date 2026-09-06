@@ -1,5 +1,7 @@
 # Global Market Terminal
 
+**English** | [日本語](README.ja.md)
+
 A lightweight, self-hosted web dashboard for observing world markets on a single
 screen — global equities and indices, foreign exchange, cryptocurrencies, and
 precious metals — with an uncompromising focus on **data provenance**: every
@@ -38,16 +40,11 @@ Key design choices:
 
 ## Screenshot
 
-A screenshot of the running dashboard can be placed here:
+![Global Market Terminal dashboard](docs/images/dashboard.png)
 
-```
-docs/images/dashboard.png
-```
-
-> No screenshot is bundled in this repository. When you add one, make sure it
-> contains **no** API keys, personal data, internal IP addresses, or private
-> hostnames. A clean, logged-out dashboard view with provider status badges
-> visible is ideal.
+> A view of the running dashboard. It contains no API keys, personal data,
+> internal IP addresses, or private hostnames — a clean dashboard with provider
+> status badges visible.
 
 ---
 
