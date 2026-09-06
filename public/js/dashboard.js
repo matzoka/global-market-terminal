@@ -28,6 +28,11 @@ window.GMT = window.GMT || {};
     detailContent.replaceChildren();
     if (!item || !quote) { detailContent.appendChild(detailElement('p', 'detail-empty', '確認済みの市場データを取得中です。')); return; }
     var change = G.changePercent(item), symbol = item.displaySymbol || item.id, status = quote.status || 'UNAVAILABLE', history = (G.bars[id] && Array.isArray(G.bars[id].bars) ? G.bars[id].bars.map(function (bar) { return bar.close; }) : item.history) || [];
+    var meta = G.changeProvenance(item), changeNote = '';
+    if (meta && Number.isFinite(change)) {
+      if (meta.changeBasis === 'COINBASE_SPOT_VS_YAHOO_PREV_UTC_DAY') changeNote = '派生日次変動：Coinbase Spot 現在値 vs Yahoo Finance 前UTC日確定終値（異提供元比較）';
+      else if (meta.changeBasis === 'FRANKFURTER_ECB_PREV_BUSINESS_DAY') changeNote = '派生日次変動：Frankfurter ECB 現在値 vs 直前ECB営業日終値';
+    }
     var hero = detailElement('section', 'detail-hero'), symbolLine = detailElement('div', 'detail-symbol', symbol), nameLine = detailElement('div', 'detail-name', item.name), price = detailElement('div', 'detail-price', formatPrice(quote.price, item.decimals)), changeLine = detailElement('div', 'detail-change ' + (Number.isFinite(change) && change < 0 ? 'num-down' : 'num-up'), formatChange(item)), sourceStatus = detailElement('span', 'detail-status detail-status-' + status.toLowerCase(), STATUS_LABEL[status] || '未取得');
     hero.append(symbolLine, nameLine, price, changeLine, sourceStatus); detailContent.appendChild(hero);
     var grid = detailElement('section', 'detail-grid');
@@ -39,6 +44,7 @@ window.GMT = window.GMT || {};
       detailField('調査区分', item.researchGroup === 'fx' ? '為替参考値' : item.researchGroup === 'crypto' ? '暗号資産の集計参考値' : item.referenceOnly ? 'オルカン参考（ETF）' : '市場参考値'),
       detailField('価格の注意', item.researchGroup === 'fx' ? '約定レート・スワップは証券会社ごとに異なります' : item.researchGroup === 'crypto' ? '取引所の約定価格・手数料とは異なります' : item.referenceOnly ? '投資信託の基準価額そのものではありません' : '出所・配信区分を確認してください')
     );
+    if (changeNote) grid.append(detailField('日次変動の注意', changeNote));
     detailContent.appendChild(grid);
     var trend = detailElement('section', 'detail-trend'), trendTitle = detailElement('div', 'detail-section-title', '確認済み価格の推移'), trendNote = detailElement('div', 'detail-note', history.length >= 2 ? '確認済み ' + history.length + ' 点 ・ 表示専用' : detailBarsLoading[id] ? '確認済みの日足系列を取得中…' : detailBarsUnavailable[id] ? '現在の提供元から確認済みの日足系列は取得できません。' : 'この銘柄・指数に確認済みの価格系列はありません。');
     trend.appendChild(trendTitle);

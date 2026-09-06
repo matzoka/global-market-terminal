@@ -9,9 +9,46 @@ window.GMT = window.GMT || {};
   G.onUpdate = function (fn) { updateListeners.push(fn); };
   G.onBars = function (fn) { barsListeners.push(fn); };
   G.get = function (id) { return G.store[id] || null; };
+  // Derive the previous-close basis used for daily change, respecting each
+  // instrument group's provenance rules (P1-CHG):
+  //  - FX:    Frankfurter ECB quote vs Frankfurter ECB daily bar (same provider/series).
+  //           Use the latest bar strictly before quote.asOf's UTC date.
+  //  - Crypto: Coinbase Spot quote vs Yahoo Finance daily bar (cross-provider).
+  //           Use the latest confirmed UTC-day bar strictly before today (UTC).
+  //  - Metals: spot quote vs futures bar must NOT be mixed; keep null ('—').
+  function derivePreviousClose(item) {
+    var q = item && item.quote;
+    if (!q || !Number.isFinite(q.price)) return null;
+    if (Number.isFinite(q.previousClose) && q.previousClose > 0) return q.previousClose; // backend-supplied (stocks)
+    var group = item.researchGroup, bars = G.bars[item.id] && Array.isArray(G.bars[item.id].bars) ? G.bars[item.id].bars : null;
+    if (!bars || bars.length < 2) return null;
+    var sorted = bars.slice().sort(function (a, b) { return String(a.time).localeCompare(String(b.time)); });
+    if (group === 'fx') {
+      var asOfDay = (q.asOf || '').slice(0, 10);
+      if (!asOfDay) return null;
+      var prior = sorted.filter(function (b) { return b.time < asOfDay && Number.isFinite(b.close); });
+      return prior.length ? prior[prior.length - 1].close : null;
+    }
+    if (group === 'crypto') {
+      var today = new Date().toISOString().slice(0, 10);
+      var confirmed = sorted.filter(function (b) { return b.time < today && Number.isFinite(b.close); });
+      return confirmed.length ? confirmed[confirmed.length - 1].close : null;
+    }
+    return null; // metals and everything else stay '—'
+  }
   G.changePercent = function (item) {
     var q = item && item.quote;
-    return q && Number.isFinite(q.price) && Number.isFinite(q.previousClose) && q.previousClose > 0 ? (q.price / q.previousClose - 1) * 100 : null;
+    if (!q || !Number.isFinite(q.price)) return null;
+    var prev = derivePreviousClose(item);
+    return Number.isFinite(prev) && prev > 0 ? (q.price / prev - 1) * 100 : null;
+  };
+  // Provenance metadata for the derived daily change (P1-CHG). Returns null when
+  // no derived change is shown (e.g. metals), so callers can render '—'.
+  G.changeProvenance = function (item) {
+    var group = item.researchGroup;
+    if (group === 'fx') return { priceSource: 'FRANKFURTER_ECB', basisSource: 'FRANKFURTER_ECB', changeBasis: 'FRANKFURTER_ECB_PREV_BUSINESS_DAY' };
+    if (group === 'crypto') return { priceSource: 'COINBASE_PUBLIC_SPOT', basisSource: 'YAHOO_FINANCE_DAILY', changeBasis: 'COINBASE_SPOT_VS_YAHOO_PREV_UTC_DAY' };
+    return null;
   };
   function notify() { updateListeners.forEach(function (fn) { try { fn(lastDashboard); } catch (_) {} }); }
   function notifyBars(id) { barsListeners.forEach(function (fn) { try { fn(id, G.bars[id]); } catch (_) {} }); }

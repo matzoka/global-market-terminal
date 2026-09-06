@@ -17,6 +17,19 @@ window.GMT = window.GMT || {};
   function el(tag, className, text) { var node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; }
   function fmt(value, decimals) { return Number.isFinite(value) ? Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals == null ? 2 : decimals, maximumFractionDigits: decimals == null ? 2 : decimals }) : '—'; }
   function fmtChange(value) { return Number.isFinite(value) ? (value >= 0 ? '+' : '') + value.toFixed(2) + '%' : '—'; }
+  function changeLabel(item) {
+    var meta = G.changeProvenance(item);
+    if (!meta || !Number.isFinite(G.changePercent(item))) return '';
+    if (meta.changeBasis === 'FRANKFURTER_ECB_PREV_BUSINESS_DAY') return '前営業日比';
+    if (meta.changeBasis === 'COINBASE_SPOT_VS_YAHOO_PREV_UTC_DAY') return '前UTC日比';
+    return '';
+  }
+  function fmtChangeWithLabel(item) {
+    var value = G.changePercent(item);
+    if (!Number.isFinite(value)) return '—';
+    var label = changeLabel(item);
+    return (value >= 0 ? '+' : '') + value.toFixed(2) + '%' + (label ? ' · ' + label : '');
+  }
   function polarity(value) { return Number.isFinite(value) && value < 0 ? 'num-down' : 'num-up'; }
   function statusOf(item) { return item && item.quote ? item.quote.status : 'UNAVAILABLE'; }
   function sourceDetails(quote) { return [quote.provider, quote.deliveryLabel, quote.providerSymbol, quote.asOf && '基準 ' + quote.asOf, quote.fetchedAt && '取得 ' + quote.fetchedAt, quote.reason].filter(Boolean).join(' · '); }
@@ -53,7 +66,7 @@ window.GMT = window.GMT || {};
       });
       block.append(title, list, el('p', 'universe-note', group.note)); root.appendChild(block);
     });
-    W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChange(change); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
+    W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
   };
 
   function range(rows, key, direction) { return rows.reduce(function (result, row) { return direction === 'min' ? Math.min(result, row[key]) : Math.max(result, row[key]); }, direction === 'min' ? Infinity : -Infinity); }
@@ -116,7 +129,7 @@ window.GMT = window.GMT || {};
   W.initCompare = function (root) {
     var cards = {}; root.classList.add('compare-strip');
     COMPARE_IDS.forEach(function (id) { var card = el('div', 'compare-card'), symbol = el('div', 'compare-symbol', id), price = el('div', 'compare-price', '—'), change = el('div', 'compare-change', '—'), mini = document.createElement('canvas'); mini.width = 112; mini.height = 20; selectable(card, id, id); card.append(symbol, price, change, mini); root.appendChild(card); cards[id] = { symbol: symbol, price: price, change: change, mini: mini }; });
-    W.updateCompare = function () { Object.keys(cards).forEach(function (id) { var item = G.get(id), cell = cards[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChange(change); cell.change.className = 'compare-change ' + polarity(change); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
+    W.updateCompare = function () { Object.keys(cards).forEach(function (id) { var item = G.get(id), cell = cards[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'compare-change ' + polarity(change); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
   };
 
   var MARKETS = [
