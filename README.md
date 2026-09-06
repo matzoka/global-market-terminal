@@ -1,150 +1,383 @@
-# GMT-1 // Global Market Terminal
+# Global Market Terminal
 
-GMT-1 is a **self-hosted, read-only market-observation dashboard** for evaluating
-what market data is actually useful before paying for it. It does not place
-orders, create prices, scrape consumer-finance pages, or hide a source's
-coverage limits. It runs locally (loopback) and renders a CRT-style trading
-"radar": world indices, a sector heatmap, an AAPL daily chart, a metals panel,
-and world-session clocks.
+A lightweight, self-hosted web dashboard for observing world markets on a single
+screen — global equities and indices, foreign exchange, cryptocurrencies, and
+precious metals — with an uncompromising focus on **data provenance**: every
+value shows where it came from, its delivery classification, and its reference
+time.
 
-Every value shown is tagged with its **provenance** — the provider, the delivery
-classification (`REALTIME` / `DELAYED` / `EOD` / `PARTIAL_REALTIME` /
-`UNVERIFIED` / `STALE` / `UNAVAILABLE`), and the reference timestamp — so you
-never mistake a single-exchange feed for a full market, or a reference price for
-an execution price.
+> **Formerly _GMT-1 Market Terminal_**. The old name may still appear in code
+> comments or config as a codename; the public project name is now
+> **Global Market Terminal**.
 
-## Free evaluation configuration
+---
 
-The recommended free starting point is an **Alpaca Basic personal account**. Its
-IEX feed provides U.S.-listed stock/ETF data, which powers the equity heatmap
-and the AAPL daily chart. The heatmap tile area is the latest verified **IEX
-daily dollar volume** (daily-bar close × IEX daily volume), never an invented
-static layout or an implied market-cap value. IEX is a **single exchange**, not a
-consolidated U.S. market feed: every affected item is labelled `IEX PARTIAL`,
-and the header says `IEX DATA — PARTIAL MARKET`. It must never be read as a
-full-market last price.
+## Overview
 
-Two extra personal-use free sources extend this profile without pretending to be
-an execution feed. EODHD supplies end-of-day reference data for nine of the ten
-displayed underlying indices; each is cached for 24 hours. FTSE 100 remains
-`UNAVAILABLE` because its free index list did not provide the underlying index,
-and an ETF is not substituted. Metals.Dev supplies a single four-metal
-USD/troy-ounce spot-reference batch; GMT-1 limits retrieval to three times per
-day so its 100-request monthly free quota is not exhausted. Neither source is
-used as a synthetic or relabelled-live substitute.
+Global Market Terminal is a **read-only market-observation dashboard**. It does
+not place orders, create prices, scrape consumer-finance pages, or disguise a
+source's coverage limits. It is designed to help you evaluate *which* market
+data is actually worth paying for before you subscribe to a vendor.
 
-### Start it
+The application is built around one principle: **never mistake a partial feed
+for the whole market, or a reference price for an executable one.** Every quote
+is tagged with its source, its delivery classification, and its reference
+timestamp, so the user can make that distinction at a glance.
 
-1. Create a free personal Alpaca account yourself. In its **Paper Trading** home
-   screen, use **API Keys → Generate New Keys** to obtain an API key ID and
-   secret. Do not open a Live account, deposit funds, or upgrade a plan for
-   GMT-1.
-2. Create free personal accounts at EODHD and Metals.Dev, then obtain one API
-   key from each dashboard. Do not enter payment information or select an
-   upgrade.
-3. Create `.env` by copying `.env.example`. On Windows PowerShell:
+Key design choices:
 
-   ```powershell
-   Copy-Item .env.example .env
-   ```
+- **Provenance-aware:** each instrument carries a status such as `REALTIME`,
+  `DELAYED`, `EOD`, `PARTIAL_REALTIME`, `UNVERIFIED`, `STALE`, or
+  `UNAVAILABLE`, plus the provider and the as-of time.
+- **No synthetic data:** missing or failed values are shown as `STALE` or
+  `UNAVAILABLE`; the app never invents a price, a layout, or a market cap.
+- **Local-first:** binds to loopback by default and serves a restrictive
+  Content-Security-Policy; the browser only talks to same-origin API routes.
 
-   On macOS / Linux:
+---
 
-   ```sh
-   cp .env.example .env
-   ```
+## Screenshot
 
-4. Open `.env` and replace the blank values with the three providers'
-   credentials:
+A screenshot of the running dashboard can be placed here:
 
-   ```ini
-   MARKET_DATA_PROVIDER=alpaca
-   ALPACA_API_KEY_ID=your_key_id
-   ALPACA_API_SECRET_KEY=your_secret_key
-   EODHD_API_TOKEN=your_eodhd_token
-   METALS_DEV_API_KEY=your_metals_dev_key
-   ```
+```
+docs/images/dashboard.png
+```
 
-5. Run `npm run verify:provider` once after adding or rotating a key. It makes
-   read-only requests, checks each configured provider, and explicitly lists the
-   dashboard instruments outside the configured coverage. Do not run it
-   repeatedly: it consumes the free providers' quota.
-6. Run `npm start`, then open `http://127.0.0.1:8787`. If that port is already
-   in use, start with `PORT=8788 npm start` (PowerShell:
-   `$env:PORT='8788'; npm start`) and open `http://127.0.0.1:8788` instead.
+> No screenshot is bundled in this repository. When you add one, make sure it
+> contains **no** API keys, personal data, internal IP addresses, or private
+> hostnames. A clean, logged-out dashboard view with provider status badges
+> visible is ideal.
 
-No API credential belongs in source code, browser storage, a chat, or a Git
-commit. Keep `MARKET_DATA_PROVIDER=none` until the free account is ready; that
-safe first run displays no prices rather than demo values.
+---
 
-> **Note on secrets.** `.env` is git-ignored and never committed. For a
-> headless deployment (e.g. a systemd user service), the same variables can be
-> injected from an out-of-tree environment file outside the repo, e.g.
-> `EnvironmentFile=%h/.config/gmt1-market-terminal/runtime.env`. The application
-> only ever reads values from the process environment.
+## Features
 
-## Data states
+Implemented and available in the current release:
 
-| State | Meaning |
-| --- | --- |
-| `IEX PARTIAL` | Alpaca IEX data from one U.S. exchange. It is not the consolidated market. |
-| `REALTIME` | Explicitly approved exchange entitlement for this instrument. |
-| `DELAYED` | Verified provider quote with known delay. |
-| `EOD` | EODHD end-of-day reference value, not an intraday quote or execution price. |
-| `UNVERIFIED` | Provider response exists, but delivery rights/classification were not approved. |
-| `STALE` | Last verified provider value; the current refresh failed. |
-| `UNAVAILABLE` | No approved source is configured or available for this instrument. |
+- **Global equities & indices** — world indices (S&P 500, NASDAQ 100, Nikkei
+  225, DAX, Hang Seng, Shanghai, ASX, EURO STOXX 50, FTSE 100 shown as
+  unavailable when no free source resolves it, etc.) plus a U.S. equity heatmap
+  (NVIDIA, Microsoft, Apple, energy, financials, …).
+- **Foreign exchange** — major pairs (USD/JPY, EUR/USD, GBP/USD, AUD/USD,
+  EUR/JPY) with ECB daily reference series.
+- **Cryptocurrencies** — BTC, ETH, SOL, XRP priced in JPY via an aggregated
+  public reference (no exchange account required).
+- **Metals** — gold, silver, platinum, palladium spot reference (quota-cached).
+- **Charts** — daily candles / daily-price lines per instrument, with an honest
+  "close-only" label where only daily closes are available.
+- **Market comparison** — a strip comparing a curated set of instruments.
+- **Market timing** — world-session clocks (New York, London, Frankfurt,
+  Hong Kong, Shanghai, Tokyo, Sydney) with open/closed/lunch state.
+- **Drag-and-drop layout** — rearrange and resize panels; layout persists in
+  the browser via `localStorage`.
+- **Detail drawer** — verified quote, source, delivery classification,
+  timestamps, tile-area basis, and provider-returned price history.
+- **Provenance badges** — color-coded status badges for every instrument.
 
-The application never creates a substitute price. AAPL's daily candles and the
-index histories are provider-returned OHLCV data; they are never generated,
-rebased, or simulated.
+Features that are **not** implemented (do not assume they exist): order entry,
+portfolio tracking, alerts/notifications, backtesting, and any paid-data
+aggregation beyond what the configured free providers return.
 
-## What remains from the terminal
+---
 
-- CRT design, five widgets, drag-and-drop layout, and width controls.
-- Browser-only layout persistence (`localStorage`).
-- Global index coverage panel, sector heatmap, AAPL chart, metals panel, and
-  world-session clocks.
-- A tap/click detail drawer: verified quote, source, delivery classification,
-  timestamps, tile-area basis, and only provider-returned price history. Close
-  it with `CLOSE [ESC]` or Escape.
+## Architecture
 
-## Optional licensed data later
+```
+Browser (HTML/CSS/JS)
+        │  same-origin fetch, /api/v1/*
+        ▼
+Node.js application (server/server.mjs)
+        │  reads provider credentials from environment
+        ▼
+Market data providers (pluggable adapters under server/providers/)
+```
 
-The server still contains a Twelve Data adapter for a formally licensed plan. Do
-not set a symbol to `REALTIME` until the current plan, exchange entitlement, and
-display permission have been checked. A cheap/free API tier is not automatically
-licensed for a dashboard display.
+- The browser never calls vendor APIs directly and never holds provider
+  credentials.
+- The Node.js server loads provider keys from the process environment (`.env`
+  for local dev, or an out-of-tree environment file for deployment) and proxies
+  all vendor traffic.
+- Provider responses are cached on disk (`data/`, git-ignored) with a short
+  TTL, supporting honest `STALE` handling during upstream failures.
 
-Before any paid step, first use the free profile for a while and decide which
-missing coverage is genuinely useful: consolidated U.S. data, a specific global
-index region, or metals. Buy only the one that proves necessary.
+---
 
-## Security and operation
+## Tech Stack
 
-- Keys live only in the environment (`.env`, or an out-of-tree env file),
-  excluded from version control.
+- **Node.js** (>= 22, native ES modules) — application server and provider
+  adapters. No backend framework; uses the built-in `node:http` server.
+- **HTML** — single static `index.html`.
+- **CSS** — hand-written `css/terminal.css` (CRT-style dark theme, no
+  frameworks, no external CDNs/fonts).
+- **JavaScript** — vanilla browser JS (`js/*.js`), no bundler, no SPA
+  framework.
+
+No React/Vue/Svelte, no build step, no database.
+
+---
+
+## Data Providers
+
+| Provider | Coverage | API key required? |
+| --- | --- | --- |
+| **Alpaca** (IEX feed) | U.S.-listed equities & ETFs (single-exchange IEX feed) | **Yes** (free paper-trading key) |
+| **EODHD** | End-of-day reference for underlying indices | **Yes** (free tier token) |
+| **Metals.dev** | Gold/silver/platinum/palladium spot reference | **Yes** (free API key) |
+| **Twelve Data** | Optional licensed FX / general quotes | **Yes** (paid/licensed plan) |
+| **CoinGecko** (public) | Aggregated crypto reference (BTC/ETH/SOL/XRP in JPY) | **No** (public endpoint) |
+| **Frankfurter** (ECB) | ECB daily FX reference series | **No** (public endpoint) |
+
+Notes:
+
+- The free starting profile is **Alpaca (IEX) + EODHD + Metals.dev + the two
+  keyless public sources (CoinGecko, Frankfurter)**. Twelve Data is kept for a
+  formally licensed plan and is off by default.
+- Alpaca's IEX feed is a **single U.S. exchange**, not a consolidated market
+  feed. Items served from it are labelled `IEX PARTIAL` and the header reads
+  `IEX DATA — PARTIAL MARKET`. It must never be read as a full-market last
+  price.
+- Metals.dev's free tier is quota-limited (≈100 requests/month); Global Market
+  Terminal caps retrieval to three batches per day.
+- Never embed any provider key in browser-side JavaScript. Keys live only in
+  the server process environment.
+
+---
+
+## Installation
+
+Prerequisites: **Node.js >= 22**.
+
+```sh
+git clone https://github.com/<your-org>/global-market-terminal.git
+cd global-market-terminal
+npm install
+cp .env.example .env
+```
+
+Then edit `.env` and fill in the credentials for the providers you want to use
+(see [Configuration](#configuration)). With `MARKET_DATA_PROVIDER=none` the app
+starts safely and shows no prices rather than demo values.
+
+> `npm install` is optional: the project has **no runtime dependencies**
+> (Node.js built-ins only), so `node server/server.mjs` works without it. The
+> install step is harmless and future-proofs the project.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and set the following variables. **Never commit
+your `.env`.** Leave values blank for providers you do not use.
+
+| Variable | Required / Optional | Provider | Purpose |
+| --- | --- | --- | --- |
+| `HOST` | Optional | — | Bind address (default `127.0.0.1`). |
+| `PORT` | Optional | — | Listen port (default `8787`). |
+| `MARKET_DATA_PROVIDER` | Required* | — | `none` \| `alpaca` \| `twelvedata`. Use `none` until a key is configured. |
+| `ALPACA_API_KEY_ID` | Optional | Alpaca | Alpaca API key ID. |
+| `ALPACA_API_SECRET_KEY` | Optional | Alpaca | Alpaca API secret key. |
+| `TWELVE_DATA_API_KEY` | Optional | Twelve Data | API key (licensed plan only). |
+| `EODHD_API_TOKEN` | Optional | EODHD | API token for EOD index reference. |
+| `METALS_DEV_API_KEY` | Optional | Metals.dev | API key for spot metals. |
+| `MARKET_DATA_REALTIME_IDS` | Optional | — | Comma-separated instrument IDs explicitly approved as real-time. |
+| `MARKET_DATA_DELAYED_IDS` | Optional | — | Comma-separated instrument IDs classified as delayed. |
+| `MARKET_DATA_EOD_IDS` | Optional | — | Comma-separated instrument IDs classified as end-of-day. |
+| `QUOTE_CACHE_SECONDS` | Optional | — | Snapshot cache TTL (default `60`). |
+
+\* `MARKET_DATA_PROVIDER` is required to be a known value; `none` is the safe
+default that displays no prices.
+
+### Headless / deployment secrets
+
+The application reads variables from the **process environment** only. For a
+headless deployment (e.g. a systemd user service), inject the same variables
+from an environment file that lives **outside the repository**, for example:
+
+```
+EnvironmentFile=%h/.config/global-market-terminal/runtime.env
+```
+
+`runtime.env` and any `.env` must stay out of version control. The app performs
+no filesystem reads of secrets beyond the process environment.
+
+---
+
+## Security
+
+- **Never commit API keys.** Provider credentials are read from the environment
+  at runtime.
+- **`.env` is excluded from Git** (see `.gitignore`).
+- **`runtime.env` and other production secrets must remain outside the
+  repository.**
+- **Do not embed secret API keys in browser-side JavaScript.** The browser
+  only calls same-origin `/api/v1/*` routes.
+- Use environment variables or your platform's secret storage for credentials.
 - The server binds to `127.0.0.1` by default and sends a restrictive CSP.
-- The browser calls only same-origin `/api/v1/*` routes.
-- A short cache and persisted last-verified values support honest `STALE`
-  handling during an upstream failure.
-- This is not a trading system. Do not expose it as a public unauthenticated
-  API.
+- This is **not a trading system**. Do not expose it as a public,
+  unauthenticated API.
+- For internet deployment, place it behind HTTPS and authenticated private
+  access; retain loopback binding for the application port and proxy only the
+  authenticated frontend.
 
-For internet deployment, place it behind HTTPS and authenticated private access;
-retain loopback binding for the application port and proxy only the
-authenticated frontend.
+---
 
-## Fonts
+## Project Structure
 
-The bundled `M PLUS 1 Code` font (`assets/fonts/MPLUS1Code.ttf`) is licensed
-under the **SIL Open Font License, Version 1.1** (see `assets/fonts/OFL.txt`).
-It is redistributable under the terms of that license; the OFL notice must
-accompany the font.
+```
+.
+├── index.html              # Static dashboard shell
+├── css/
+│   └── terminal.css        # CRT-style theme (no frameworks/CDNs)
+├── js/
+│   ├── adapters.js         # Browser data client (same-origin API)
+│   ├── widgets.js          # Research widgets (universe, chart, radar, compare, clocks)
+│   └── dashboard.js        # Boot, layout persistence, data state
+├── server/
+│   ├── server.mjs          # Node.js HTTP server + API routes
+│   ├── config.mjs          # Environment-driven configuration
+│   ├── market-service.mjs  # Quote/bar orchestration + disk cache
+│   ├── instruments.mjs     # Instrument registry
+│   └── providers/          # Pluggable provider adapters
+│       ├── alpaca.mjs
+│       ├── eodhd.mjs
+│       ├── metals-dev.mjs
+│       ├── twelvedata.mjs
+│       ├── coingecko.mjs
+│       └── frankfurter.mjs
+├── scripts/
+│   └── verify-provider.mjs # Read-only provider preflight check
+├── test/
+│   └── market-service.test.mjs
+├── assets/
+│   └── fonts/              # Bundled M PLUS 1 Code (SIL OFL 1.1)
+├── .env.example            # Template (no secrets)
+├── .gitignore
+└── README.md
+```
 
-## Validation
+Notes:
 
-Run `npm test` for data-integrity checks, then `npm run verify:provider` after
-adding a provider. The normal workflow is:
+- `data/` and `output/` are created at runtime and are git-ignored.
+- `node_modules/` is not required (zero runtime dependencies) but is ignored
+  regardless.
 
-`dashboard load -> provider response -> source/status shown -> refresh -> stale or unavailable on failure`
+---
+
+## Running
+
+Development / local start:
+
+```sh
+npm start            # node server/server.mjs, binds 127.0.0.1:8787 by default
+```
+
+Then open <http://127.0.0.1:8787>.
+
+If the default port is busy:
+
+```sh
+PORT=8788 npm start
+```
+
+Watch mode (auto-restart on change):
+
+```sh
+npm run dev
+```
+
+Verify a newly added provider key without hammering quotas repeatedly:
+
+```sh
+npm run verify:provider
+```
+
+---
+
+## Testing
+
+The project ships data-integrity tests (Node.js built-in test runner, no
+framework):
+
+```sh
+npm test
+```
+
+Tests cover the instrument registry (no synthetic prices), provider adapter
+scoping (e.g. Alpaca limited to U.S. equities), EODHD/EOD mapping, Metals.dev
+quota limits, and an assertion that the browser code contains no vendor
+endpoints or random price generators.
+
+---
+
+## Deployment
+
+Global Market Terminal is a single Node.js process with **no external
+dependencies** and **no database**. It can be deployed to any environment where
+Node.js >= 22 is available:
+
+- Copy the project to the host.
+- Provide provider credentials via the process environment (`.env` for local,
+  an out-of-tree `runtime.env` / platform secret storage for production).
+- Start `node server/server.mjs` (for example, under a systemd user service or
+  a container).
+- Bind to loopback and expose the frontend through an authenticated reverse
+  proxy with HTTPS. Do not expose the raw port publicly without authentication.
+
+No Cloudflare Workers or other serverless adapter is configured at this time.
+
+---
+
+## Troubleshooting
+
+- **No prices shown / `configuration_required`**
+  Set `MARKET_DATA_PROVIDER` to a configured provider and supply its
+  credentials in `.env`. With `none`, the dashboard intentionally shows nothing.
+
+- **A provider returns no data / `quote_refresh_failed`**
+  Check the key is correct and not expired, and that the free plan covers the
+  requested instrument. Some providers (e.g. EODHD) deliberately omit certain
+  indices; those show `UNAVAILABLE` by design.
+
+- **Port already in use**
+  Another process holds the port. Start with `PORT=<other> npm start`.
+
+- **Provider-side outage**
+  Affected instruments fall back to the last cached value as `STALE`, or
+  `UNAVAILABLE` if nothing was ever fetched. The rest of the dashboard keeps
+  working.
+
+- **Network failure**
+  Same as above: cached values are shown as `STALE`; the app never synthesizes
+  a price. Restore connectivity and refresh.
+
+---
+
+## Disclaimer
+
+- **This project does not provide investment advice.**
+- Market data may be **delayed, incomplete, or inaccurate**.
+- **Users are responsible for their own investment decisions.**
+- Nothing here is an executable price or an order. Verify any figure against
+  your own authorized source before acting on it.
+
+---
+
+## Credits / Acknowledgements
+
+- **Market data**: [Alpaca](https://alpaca.markets),
+  [Twelve Data](https://twelvedata.com),
+  [EODHD](https://eodhd.com),
+  [Metals.dev](https://metals.dev),
+  [CoinGecko](https://www.coingecko.com), and
+  [Frankfurter](https://frankfurter.dev) (ECB reference rates).
+- **Font**: [M PLUS 1 Code](https://github.com/coz-m/MPLUS_FONTS) by the
+  M+ FONTS Project Authors, licensed under the **SIL Open Font License 1.1**
+  (see `assets/fonts/OFL.txt`). The font is redistributed under the OFL; the
+  application code is licensed separately (see [LICENSE](./LICENSE)).
+
+---
+
+## License
+
+See [LICENSE](./LICENSE).

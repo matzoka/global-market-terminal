@@ -1,4 +1,4 @@
-/* GMT-1 production data client. No synthetic prices or browser-to-vendor calls. */
+/* Global Market Terminal — production data client. No synthetic prices or browser-to-vendor calls. */
 window.GMT = window.GMT || {};
 
 (function (G) {

@@ -1,4 +1,4 @@
-/* GMT-1 research widgets. They render only records returned by the private API. */
+/* Global Market Terminal — research widgets. They render only records returned by the private API. */
 window.GMT = window.GMT || {};
 
 (function (G) {

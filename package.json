@@ -1,8 +1,8 @@
 {
-  "name": "gmt1-market-terminal",
+  "name": "global-market-terminal",
   "version": "3.2.0",
-  "private": true,
-  "description": "Private, read-only market terminal with provenance-aware market data.",
+  "private": false,
+  "description": "Read-only market terminal with provenance-aware market data: global equities, indices, FX, crypto, and metals in one screen.",
   "type": "module",
   "scripts": {
     "start": "node server/server.mjs",

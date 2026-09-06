@@ -1,4 +1,4 @@
-/* GMT-1 production dashboard boot, layout persistence, and data state. */
+/* Global Market Terminal — production dashboard boot, layout persistence, and data state. */
 window.GMT = window.GMT || {};
 
 (function (G) {
@@ -111,7 +111,7 @@ window.GMT = window.GMT || {};
     document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && detailOpen) { event.preventDefault(); closeDetail(); } });
   }
   function boot() {
-    log('GMT-1 起動 v4.0.0 ・ 無料市場参考データモード', 'ok'); log('データ経路 ....... ブラウザ → GMT-1 API → 承認済み提供元', 'ok'); log('合成データ ....... 無効', 'ok'); log('調査対象 ......... 世界株参考・為替・暗号資産', 'ok'); log('判断レーダー ..... 売買推奨ではなく、出所と値動きの確認用です', 'warn'); log('配置 ............. 世界市場時計は最下段に固定', 'ok');
+    log('Global Market Terminal 起動 v4.0.0 ・ 無料市場参考データモード', 'ok'); log('データ経路 ....... ブラウザ → Global Market Terminal API → 承認済み提供元', 'ok'); log('合成データ ....... 無効', 'ok'); log('調査対象 ......... 世界株参考・為替・暗号資産', 'ok'); log('判断レーダー ..... 売買推奨ではなく、出所と値動きの確認用です', 'warn'); log('配置 ............. 世界市場時計は最下段に固定', 'ok');
     var W = G.widgets; W.initUniverse(document.getElementById('w-universe')); W.initChart(document.getElementById('w-chart')); W.initRadar(document.getElementById('w-radar')); W.initCompare(document.getElementById('w-compare')); W.initClocks(document.getElementById('w-clocks'));
     G.onInstrumentSelected(function (id) { showFocus(id); W.updateRadar(); });
     G.onUpdate(function (data) { W.updateUniverse(); W.updateChart(); W.updateRadar(); W.updateCompare(); setConnection(data); }); G.onBars(function (id) { if (detailOpen && G.selectedInstrumentId === id) renderDetail(id); if (id === G.selectedInstrumentId) { W.updateChart(); W.updateRadar(); } });
