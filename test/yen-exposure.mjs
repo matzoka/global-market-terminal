@@ -160,10 +160,10 @@ test('P1-CHG regression: FX uses prior ECB business day (not same day)', () => {
 
 test('P1-CHG regression: crypto excludes current UTC-day bar', () => {
   const cryptoBars = { BTCJPY: { bars: [
-    { time: '2026-09-03', close: 12449941 },
-    { time: '2026-09-04', close: 12500018 },
-    { time: '2026-09-05', close: 12498838 },
-    { time: '2026-09-06', close: 12600000 }, // current UTC-day (excluded)
+    { time: '2026-09-04', close: 12449941 },
+    { time: '2026-09-05', close: 12500018 },
+    { time: '2026-09-06', close: 12498838 },
+    { time: '2026-09-07', close: 12600000 }, // current UTC-day (excluded)
   ] } };
   const G = makeClient({}, cryptoBars);
   const item = { id: 'BTCJPY', researchGroup: 'crypto', quote: { price: 12600000 } };
@@ -174,8 +174,8 @@ test('P1-CHG regression: crypto excludes current UTC-day bar', () => {
     const confirmed = sorted.filter((x) => x.time < today && Number.isFinite(x.close));
     return confirmed.length ? confirmed[confirmed.length - 1] : null;
   })(item);
-  // today is 2026-09-06, so 09-06 excluded, prior = 09-05
-  assert.ok(basis && basis.time === '2026-09-05' && basis.close === 12498838);
+  // today is 2026-09-07, so 09-07 excluded, prior = 09-06
+  assert.ok(basis && basis.time === '2026-09-06' && basis.close === 12498838);
 });
 
 test('P1-CHG regression: metals never derive a daily change', () => {

@@ -55,27 +55,27 @@ test('FX insufficient bars yields no derived change', () => {
 });
 
 const cryptoBars = [
-  { time: '2026-09-03', close: 12449941 },
-  { time: '2026-09-04', close: 12500018 },
-  { time: '2026-09-05', close: 12498838 },
-  { time: '2026-09-06', close: 12600000 }, // current UTC-day (unconfirmed, excluded)
+  { time: '2026-09-04', close: 12449941 },
+  { time: '2026-09-05', close: 12500018 },
+  { time: '2026-09-06', close: 12498838 },
+  { time: '2026-09-07', close: 12600000 }, // current UTC-day (unconfirmed, excluded)
 ];
 
 test('Crypto excludes current UTC-day (unconfirmed) bar', () => {
   const item = { price: 12600000, researchGroup: 'crypto' };
-  // today (UTC) is 2026-09-06, so 09-06 bar is excluded; prior confirmed = 09-05
+  // today (UTC) is 2026-09-07, so 09-07 bar is excluded; prior confirmed = 09-06
   const prev = derivePreviousClose(item, cryptoBars);
   assert.equal(prev, 12498838);
 });
 
 test('Crypto UTC day cross uses latest confirmed day', () => {
   const clean = [
-    { time: '2026-09-03', close: 12449941 },
-    { time: '2026-09-04', close: 12500018 },
-    { time: '2026-09-05', close: 12498838 },
+    { time: '2026-09-04', close: 12449941 },
+    { time: '2026-09-05', close: 12500018 },
+    { time: '2026-09-06', close: 12498838 },
   ];
   const item = { price: 12550000, researchGroup: 'crypto' };
-  // today (UTC) is 2026-09-06, so the last confirmed day in `clean` is 09-05
+  // today (UTC) is 2026-09-07, so the last confirmed day in `clean` is 09-06
   const prev = derivePreviousClose(item, clean);
   assert.equal(prev, 12498838);
 });
