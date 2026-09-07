@@ -44,14 +44,16 @@ async function requestChart(symbol) {
   return result;
 }
 
-function normaliseBars(result) {
+function normaliseBars(result, symbol) {
   const timestamps = result?.timestamp || [];
   const closes = result?.indicators?.quote?.[0]?.close || [];
   const rows = [];
   for (let i = 0; i < timestamps.length; i++) {
     const price = number(closes[i]);
     if (price == null) continue;
-    rows.push({ time: asIso(timestamps[i]).slice(0, 10), close: price, closeOnly: true });
+    // providerSymbol is the ACTUAL Yahoo futures symbol this provider used,
+    // so the detail view can show it instead of a guessed value.
+    rows.push({ time: asIso(timestamps[i]).slice(0, 10), close: price, closeOnly: true, providerSymbol: symbol });
   }
   return rows;
 }
@@ -72,7 +74,7 @@ export function createYahooMetalFuturesProvider() {
       if (result.meta?.instrumentType !== 'FUTURE') {
         throw new Error(`unexpected_instrument_type_${result.meta?.instrumentType || 'unknown'}`);
       }
-      const bars = normaliseBars(result);
+      const bars = normaliseBars(result, symbol);
       if (bars.length < 2) throw new Error('provider_insufficient_bars');
       return bars.slice(-Math.max(2, outputSize));
     },

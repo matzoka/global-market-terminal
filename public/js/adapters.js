@@ -68,7 +68,7 @@ window.GMT = window.GMT || {};
     if (!current || !previous || !Number.isFinite(current.close) || !Number.isFinite(previous.close) || previous.close <= 0) return null;
     var change = (current.close / previous.close - 1) * 100;
     return {
-      symbol: G.bars[item.id].providerSymbol || null,
+      symbol: (bars[0] && bars[0].providerSymbol) || G.bars[item.id].providerSymbol || null,
       current: current.close,
       currentAsOf: String(current.time).slice(0, 10),
       previous: previous.close,

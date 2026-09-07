@@ -61,6 +61,21 @@ test('YAHOO_FINANCE_METAL_FUTURES returns bars from the expected symbol per meta
       const bars = await createYahooMetalFuturesProvider().getDailyBars(byId.get(id));
       assert.ok(bars.length >= 2, `${id} bars`);
       assert.ok(bars.every((b) => Number.isFinite(b.close) && b.close > 0));
+      // providerSymbol must be the ACTUAL Yahoo futures symbol the provider used.
+      assert.equal(bars[0].providerSymbol, FUTURE_SYMBOL[id], `${id} providerSymbol`);
+      assert.ok(bars.every((b) => b.providerSymbol === FUTURE_SYMBOL[id]));
+    } finally { restore(); }
+  }
+});
+
+test('YAHOO_FINANCE_METAL_FUTURES providerSymbol maps XAU->GC=F XAG->SI=F XPT->PL=F XPD->PA=F', async () => {
+  const expected = { XAU: 'GC=F', XAG: 'SI=F', XPT: 'PL=F', XPD: 'PA=F' };
+  for (const id of METAL_IDS) {
+    const restore = stubFetch(yahooFuturesPayload(FUTURE_SYMBOL[id], 'FUTURE', [100, 101], [1788321600, 1788408000]));
+    try {
+      const { createYahooMetalFuturesProvider } = await import('../server/providers/yahoo-metal-futures.mjs');
+      const bars = await createYahooMetalFuturesProvider().getDailyBars(byId.get(id));
+      assert.equal(bars[bars.length - 1].providerSymbol, expected[id]);
     } finally { restore(); }
   }
 });
