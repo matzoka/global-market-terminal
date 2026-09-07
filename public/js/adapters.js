@@ -52,6 +52,34 @@ window.GMT = window.GMT || {};
     var basis = derivePreviousBasis(item);
     return basis ? basis.close : null;
   }
+  // Metal FUTURES prior-session change (P1-CHG-METAL). This is intentionally a
+  // SEPARATE series from the Metals.dev spot quote shown on the main card:
+  //   current  = latest valid futures bar close (even if it is today's unconfirmed bar)
+  //   previous = the most recent valid futures bar close strictly before current
+  // Spot price and futures price are NEVER mixed into one percentage. The result
+  // is shown only in the detail drawer as a reference indicator with its own
+  // provenance, and is hidden entirely when fewer than two bars are available.
+  G.metalFuturesChange = function (item) {
+    if (!item || item.kind !== 'metal') return null;
+    var bars = G.bars[item.id] && Array.isArray(G.bars[item.id].bars) ? G.bars[item.id].bars : null;
+    if (!bars || bars.length < 2) return null;
+    var sorted = bars.slice().sort(function (a, b) { return String(a.time).localeCompare(String(b.time)); });
+    var current = sorted[sorted.length - 1], previous = sorted[sorted.length - 2];
+    if (!current || !previous || !Number.isFinite(current.close) || !Number.isFinite(previous.close) || previous.close <= 0) return null;
+    var change = (current.close / previous.close - 1) * 100;
+    return {
+      symbol: G.bars[item.id].providerSymbol || null,
+      current: current.close,
+      currentAsOf: String(current.time).slice(0, 10),
+      previous: previous.close,
+      previousAsOf: String(previous.time).slice(0, 10),
+      changePercent: change,
+      provider: G.bars[item.id].provider || 'YAHOO_FINANCE_METAL_FUTURES',
+      deliveryLabel: G.bars[item.id].deliveryLabel || 'YAHOO FINANCE — METAL FUTURES REFERENCE',
+      isReference: true,
+    };
+  };
+
   G.changePercent = function (item) {
     var q = item && item.quote;
     if (!q || !Number.isFinite(q.price)) return null;

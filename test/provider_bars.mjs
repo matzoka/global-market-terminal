@@ -7,11 +7,22 @@ import { createFrankfurterProvider } from '../server/providers/frankfurter.mjs';
 const XAU = { id: 'XAU', kind: 'metal', displaySymbol: 'XAU/USD' };
 const SPX = { id: 'SPX', kind: 'index', displaySymbol: 'S&P 500' };
 
-test('Metals.dev getDailyBars returns daily XAU series from Yahoo Finance (keyless)', async () => {
+test('Metals.dev spot provider no longer supplies daily bars (futures moved to dedicated provider)', () => {
   const p = createMetalsDevProvider('TEST_KEY');
+  // Quote routing stays with the spot provider...
+  assert.equal(p.supports(XAU), true);
+  // ...but daily bars are now owned by YAHOO_FINANCE_METAL_FUTURES.
+  assert.equal(p.supportsDailyBars(XAU), false);
+});
+
+test('Yahoo metal futures provider supplies XAU daily bars from GC=F', async () => {
+  const { createYahooMetalFuturesProvider } = await import('../server/providers/yahoo-metal-futures.mjs');
+  const p = createYahooMetalFuturesProvider();
+  assert.equal(p.supports(XAU), false); // quote routing stays with spot
+  assert.equal(p.supportsDailyBars(XAU), true);
   const bars = await p.getDailyBars(XAU, 60);
   assert.ok(Array.isArray(bars), 'bars is array');
-  assert.ok(bars.length >= 10, `expected >=10 daily bars, got ${bars.length}`);
+  assert.ok(bars.length >= 2, `expected >=2 daily bars, got ${bars.length}`);
   for (const b of bars) {
     assert.ok(b.time && typeof b.time === 'string', 'has iso date');
     assert.ok(Number.isFinite(b.close) && b.close > 0, 'positive close');

@@ -7,6 +7,7 @@ import { createTwelveDataProvider } from './providers/twelvedata.mjs';
 import { createCoinGeckoProvider } from './providers/coingecko.mjs';
 import { createFrankfurterProvider } from './providers/frankfurter.mjs';
 import { createYahooFtseProvider } from './providers/yahoo-ftse.mjs';
+import { createYahooMetalFuturesProvider } from './providers/yahoo-metal-futures.mjs';
 
 let snapshots = new Map();
 let bars = new Map();
@@ -30,6 +31,7 @@ const providers = [
   config.metalsDevApiKey ? createMetalsDevProvider(config.metalsDevApiKey) : null,
   createFrankfurterProvider(),
   createYahooFtseProvider(),
+  createYahooMetalFuturesProvider(),
 ].filter(Boolean);
 
 function now() { return new Date().toISOString(); }
@@ -127,8 +129,8 @@ export async function dailyBars(id, outputSize = 60) {
   const request = (async () => {
     try {
       const result = await provider.getDailyBars(instrument, requestedLimit);
-      const status = provider.id === 'ALPACA_IEX' ? 'PARTIAL_REALTIME' : provider.id === 'COINGECKO_PUBLIC' ? 'DELAYED' : provider.id === 'FRANKFURTER_ECB' ? 'EOD' : provider.id === 'YAHOO_FINANCE_FTSE' ? 'UNVERIFIED' : qualityFor(id);
-      const deliveryLabel = provider.id === 'ALPACA_IEX' ? 'IEX DAILY BARS — SINGLE U.S. EXCHANGE' : provider.id === 'COINGECKO_PUBLIC' ? 'COINGECKO DAILY PRICE — AGGREGATED REFERENCE' : provider.id === 'FRANKFURTER_ECB' ? 'FRANKFURTER — ECB DAILY REFERENCE' : provider.id === 'YAHOO_FINANCE_FTSE' ? 'YAHOO FINANCE — FTSE 100 INDEX' : null;
+      const status = provider.id === 'ALPACA_IEX' ? 'PARTIAL_REALTIME' : provider.id === 'COINGECKO_PUBLIC' ? 'DELAYED' : provider.id === 'FRANKFURTER_ECB' ? 'EOD' : provider.id === 'YAHOO_FINANCE_FTSE' ? 'UNVERIFIED' : provider.id === 'YAHOO_FINANCE_METAL_FUTURES' ? 'UNVERIFIED' : qualityFor(id);
+      const deliveryLabel = provider.id === 'ALPACA_IEX' ? 'IEX DAILY BARS — SINGLE U.S. EXCHANGE' : provider.id === 'COINGECKO_PUBLIC' ? 'COINGECKO DAILY PRICE — AGGREGATED REFERENCE' : provider.id === 'FRANKFURTER_ECB' ? 'FRANKFURTER — ECB DAILY REFERENCE' : provider.id === 'YAHOO_FINANCE_FTSE' ? 'YAHOO FINANCE — FTSE 100 INDEX' : provider.id === 'YAHOO_FINANCE_METAL_FUTURES' ? 'YAHOO FINANCE — METAL FUTURES REFERENCE' : null;
       const response = { instrumentId: id, provider: provider.id, status, deliveryLabel, receivedAt: now(), requestedLimit, bars: result };
       bars.set(id, response);
       return response;

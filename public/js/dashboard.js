@@ -64,6 +64,22 @@ window.GMT = window.GMT || {};
     trend.appendChild(trendTitle);
     if (history.length >= 2) { var canvas = document.createElement('canvas'); canvas.width = 376; canvas.height = 88; drawDetailTrend(canvas, history, !Number.isFinite(change) || change >= 0); trend.appendChild(canvas); }
     trend.appendChild(trendNote); detailContent.appendChild(trend);
+    var futures = G.metalFuturesChange(item);
+    if (futures) {
+      var pctF = (futures.changePercent >= 0 ? '+' : '') + futures.changePercent.toFixed(2) + '%';
+      var futuresSection = detailElement('section', 'detail-grid detail-futures');
+      futuresSection.append(
+        detailElement('div', 'detail-section-title', '先物前取引日比（別系列・参考）'),
+        detailField('銘柄', futures.symbol || '—'),
+        detailField('最新先物参考値', formatPrice(futures.current, item.decimals) + ' ・ 基準 ' + futures.currentAsOf),
+        detailField('前取引日終値', formatPrice(futures.previous, item.decimals) + ' ・ 基準 ' + futures.previousAsOf),
+        detailField('変動', pctF + ' ・ ' + (futures.isReference ? '参考' : '')),
+        detailField('出所', futures.provider || '—'),
+        detailField('配信区分', futures.deliveryLabel || '—'),
+        detailField('注意', 'スポット価格とは異なる先物系列です。Yahoo Finance の連続先物シンボルは限月切替により価格が不連続になる可能性があります。')
+      );
+      detailContent.appendChild(futuresSection);
+    }
     detailContent.appendChild(detailElement('p', 'detail-disclaimer', '閲覧専用：数値を判断する前に、出所・配信区分・基準時刻を確認してください。'));
   }
   function openDetail(id) {
