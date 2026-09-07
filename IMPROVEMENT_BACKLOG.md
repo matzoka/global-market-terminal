@@ -109,7 +109,7 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **実装方式**: Backend A（dashboard から dailyBars を新呼び出し）は不採用。既存 `hydrateSparklines` が取得済みの `G.bars[id]` を利用する Frontend B を採用。P1-CHG のため `/dashboard` の外部 egress・初回応答時間は増やさず。
 - **変更ファイル**: `public/js/adapters.js`（derivePreviousClose / changeProvenance 追加）、`public/js/widgets.js`（ラベル表示）、`public/js/dashboard.js`（詳細画面の provenance 注記）、`test/change-previous-close.mjs`（新規テスト）。
 - **確認結果**: `npm test` 17/17 PASS（既存 9 + 新規 8）。GitHub main push 済み。Cloudflare 自動 Deploy 確認済み。本番 `instrumentCount: 43`・`UNAVAILABLE: FTSE` 維持。
-- **金属の別バックログ項目**: 「P1-CHG-METAL: 金属の日次変動表示（先物系列のみで閉じる別指標『先物前営業日比』として分離設計）」として新規起票を推奨。
+- **金属の実装**: 「P1-CHG-METAL」として実装完了（スポット vs 先物を混ぜず、先物系列のみの別指標「先物前取引日比」を詳細画面に分離表示）。
 
 ### P1-YEN 円相場影響の可視化（設計案提示→実装）
 - **状態**: Completed
@@ -222,12 +222,21 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 
 ---
 
-## P1-CHG-METAL — 金属の日次変動表示（別バックログ項目・未着手）
+## P1-CHG-METAL — 金属の日次変動表示（先物系列のみ・別指標として実装完了）
 
-- **状態**: Proposed
-- **背景**: P1-CHG では金属を「—」維持とした（Metals.dev スポット vs Yahoo 先物を混ぜない方針）。
-- **方針（案）**: スポット/先物を混ぜず、**先物系列のみで閉じる別指標「先物前営業日比」** として分離表示。比較は `bars`（Yahoo 先物 `GC=F` 等）内で完結させ、quote.price（スポット）は使わない。
-- **表示**: 「先物前営業日比 +x.xx%」と明記し、スポット現在値とは別レイヤーにする。
-- **provenance**: `priceSource=YAHOO_FINANCE_FUTURES` / `basisSource=YAHOO_FINANCE_FUTURES` / `changeBasis=YAHOO_FUTURES_PREV_BUSINESS_DAY`。
-- **リスク**: 先物とスポットの乖離を「同一商品」と誤認させない注記が必須。
+- **状態**: Completed
+- **実装日**: 2026-09-07
+- **採用方針（承認済み）**:
+  - **スポット vs 先物の絶対分離**: Metals.dev スポット現在値と Yahoo Finance 先物系列を一つの変化率に混ぜない。スポット価格横の日次変動「—」は維持。
+  - **専用 provider 分離**: `server/providers/yahoo-metal-futures.mjs`（`YAHOO_FINANCE_METAL_FUTURES`）を新規作成。`metals-dev.mjs` は `supportsDailyBars` を `false` にし、Yahoo 先物呼び出しを削除（bars provenance が `METALS_DEV_SPOT` と誤認されるのを防止）。
+  - **routing**: quote routing は引き続き `METALS_DEV_SPOT`、bars routing のみ `YAHOO_FINANCE_METAL_FUTURES` が担当。`market-service.mjs` に常時登録。
+  - **シンボル**: XAU→`GC=F`、XAG→`SI=F`、XPT→`PL=F`、XPD→`PA=F`。いずれも `instrumentType === 'FUTURE'` を検証、非FUTUREは reject。
+  - **算出（Frontend B）**: 既存 Yahoo 先物日足系列のみ使用。`current = 最新bar.close`（当日未確定barでも可）、`previous = その直前bar.close`（未確定barは previous にしない）、`change = (current/previous - 1)*100`。`/bars` API 契約の変更なし（regularMarketPrice 等の追加なし）。
+  - **表示**: 詳細画面のみ「先物前取引日比（別系列・参考）」を別セクション表示。スポットメイン表示は変更なし。
+  - **限月ロール**: 日付間隔からの自動判定・自動「—」化は行わない。常に「限月切替により不連続になる可能性があります」注意書きを表示。
+  - **egress**: 追加 egress 0（既存 Yahoo 先物 bars キャッシュを流用、新規 quote リクエストなし、15分キャッシュ維持）。
+  - **provenance**: `provider=YAHOO_FINANCE_METAL_FUTURES`、`deliveryLabel=YAHOO FINANCE — METAL FUTURES REFERENCE`。exchange名（COMEX/NYMEX等）は Yahoo metadata で実際に確認できる場合のみ表示（推測表現不使用）。
+- **変更ファイル**: `server/providers/yahoo-metal-futures.mjs`（新規）、`server/providers/metals-dev.mjs`（`supportsDailyBars=false` + Yahoo 先物削除）、`server/market-service.mjs`（常時登録 + bars deliveryLabel 追加）、`public/js/adapters.js`（`metalFuturesChange` 追加）、`public/js/dashboard.js`（詳細セクション追加）、`test/yahoo-metal-futures.test.mjs`（新規）、`test/provider_bars.mjs`（修正）。
+- **テスト**: 4銘柄→`GC=F`/`SI=F`/`PL=F`/`PA=F`、`instrumentType FUTURE` 検証、非FUTURE reject、`YAHOO_FINANCE_METAL_FUTURES` が bars provider、`METALS_DEV_SPOT` は quote provider のまま、最新barをcurrent・直前barをprevious、先物変動率算出、bars不足時非表示、スポット日次変動「—」維持、金属以外に先物セクション非表示、P1-CHG/YEN/FTSE 回帰なし。
+- **確認結果**: `npm test` 44/44 PASS（既存36 + P1-CHG-METAL 8）。GitHub main push 済み（`ab4d6c5`）。Cloudflare 自動 Deploy 確認済み。本番: 金属4銘柄スポット `METALS_DEV_SPOT` 維持・`prevClose=null`（「—」）、`/bars` provider 全4銘柄 `YAHOO_FINANCE_METAL_FUTURES`、`deliveryLabel=YAHOO FINANCE — METAL FUTURES REFERENCE`、詳細チャート正常（XAU 最新4476.6/前4429.8 等）、既存43銘柄に回帰なし。
 - **見積**: S
