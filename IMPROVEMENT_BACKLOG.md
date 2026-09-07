@@ -28,20 +28,39 @@
 
 ---
 
-## 正常ベースライン（固定・2026-09-06 確定）
+## 正常ベースライン（固定・2026-09-07 確定）
 
 以下は現在の「正常」の定義。これらが満たされている間は P0 障害とみなさない。
 
 | 項目 | 基準 |
 | --- | --- |
-| 現在値 | **16/16** 正常（ユーザー側受入確認セット・後述） |
-| 詳細チャート | **16/16** 正常（同上・bars 取得） |
-| 自動テスト | `npm test` **9/9** 通過 |
+| 全登録銘柄 | **43 銘柄**（内部指標・`server/instruments.mjs`） |
+| 自動テスト | `npm test` **53/53** 通過 |
+| GitHub main | ローカルと `origin/main` が一致（正本は `main`） |
 | 本番経路 | GitHub `main` → Cloudflare Builds → Workers（`https://global-market-terminal.matzoka.workers.dev/`） |
 | 旧環境 | Ubuntu 旧本番・Tailscale `:8443` 経路は**完全撤去済み** |
+| UNAVAILABLE | **SX5E のみ**（EuroStoxx 50・別バックログ P2-INDEX-SX5E で調査中）。それ以外の42銘柄はいずれかの provider から値を取得 |
 
-調査時点での本番 `/api/v1/dashboard` は全43銘柄のうち42を返却（FTSE のみ無料ソース非対応で `UNAVAILABLE`）、
-FX/暗号/金属とも値を返していることを curl で確認済み。
+現在の quote 状態（43銘柄）:
+
+| 状態 | 銘柄 | 計 |
+| --- | --- | --- |
+| PARTIAL_REALTIME (ALPACA_IEX) | ACWI + 米国株19銘柄 | 20 |
+| EOD (FRANKFURTER_ECB) | FX5 | 5 |
+| DELAYED (COINGECKO_PUBLIC / METALS_DEV_SPOT) | 暗号4 + 金属スポット4 | 8 |
+| UNVERIFIED (YAHOO_FINANCE_FTSE / YAHOO_FINANCE_INDEX) | FTSE + Yahoo index 8銘柄 | 9 |
+| UNAVAILABLE (EODHD_EOD) | SX5E | 1 |
+
+主要 provider 構成:
+
+- 米国ETF・米国株: `ALPACA_IEX`
+- FX: `FRANKFURTER_ECB`
+- 暗号 quote: `COINGECKO_PUBLIC`（実態の spot source については既存 provenance 説明を維持）
+- 金属 spot: `METALS_DEV_SPOT`
+- FTSE: `YAHOO_FINANCE_FTSE`
+- 8指数: `YAHOO_FINANCE_INDEX`（SPX=`^GSPC`、NDX=`^NDX`、DJI=`^DJI`、DAX=`^GDAXI`、N225=`^N225`、HSI=`^HSI`、ASX=`^AXJO`、SSE=`000001.SS`）
+- 金属 bars: `YAHOO_FINANCE_METAL_FUTURES`（XAU=`GC=F`、XAG=`SI=F`、XPT=`PL=F`、XPD=`PA=F`）
+- SX5E: `EODHD_EOD`（現在 UNAVAILABLE）
 
 ---
 
@@ -49,7 +68,7 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 
 ### 「43 銘柄」＝ 全登録銘柄数（内部指標）
 - `server/instruments.mjs` に登録された全インストルメント。`npm test` も `instruments.length === 43` を検証。
-- FTSE を含む。FTSE は無料ソースでカバーされないため恒常的に `UNAVAILABLE`。
+- FTSE を含む。FTSE は `YAHOO_FINANCE_FTSE` でカバー済み（UNVERIFIED）。現在 UNAVAILABLE なのは SX5E（EuroStoxx 50）のみ、別バックログ P2-INDEX-SX5E で調査中。
 
 ### 「16/16」＝ ユーザー側受入確認セット（外部指標・アプリ内定数なし）
 - **コード調査結果**: アプリ内に `16` という定数・カウンターは存在しない。該当箇所:
@@ -66,7 +85,7 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 
 | 優先度 | 範囲 |
 | --- | --- |
-| **P0** | **現在の本番障害・重大な誤表示のみ**。ベースライン（16/16・9/9・Deploy経路）を崩す事象。 |
+| **P0** | **現在の本番障害・重大な誤表示のみ**。ベースライン（43銘柄・53/53・Deploy経路）を崩す事象。 |
 | **P1** | 投資判断価値の直接向上、または信頼の土台（バージョン/README 整合）。 |
 | **P2** | P1 の調査前提・設計案・堅牢性・運用。 |
 | **P3** | 拡張・QoL。 |
@@ -180,7 +199,7 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 
 ### P2-VER FX/暗号未取得表示の過去事例（解消済み・監視継続）
 - **背景**: 初期調査でユーザー提示 UI に「FX5件・暗号4件＝未取得」があったが、本番 curl では値を返していた（矛盾）。
-- **結論**: 現在の本番は正常（16/16 満たす）とみなし P0 除外。原因は「デプロイ直後/コールドスタートのタイムアウト」「一時的上流障害のスナップショット」「初回ロード時プレースホルダー固着」のいずれかと推定。
+- **結論**: 現在の本番は正常（43銘柄・53/53 満たす）とみなし P0 除外。原因は「デプロイ直後/コールドスタートのタイムアウト」「一時的上流障害のスナップショット」「初回ロード時プレースホルダー固着」のいずれかと推定。
 - **対応**: 障害時のリトライ/タイムアウト表示を強化し、再発を検知しやすくする。再発時は P0 起票。
 
 ### P2-VER2 `scripts/verify-provider.mjs` が実態と乖離（死コード化）
@@ -202,6 +221,19 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **証拠**: EOD 指標の `asOf` は前営業日。休場日に「古い？最新？」が直感できない。
 - **提案**: 「基準 2026-09-04（前営業日）」の相対表記追加、またはバッジに「前営業日終値」と明記。
 - **見積**: S
+
+---
+
+### P2 残タスク整理（Proposed / Pending 一覧・2026-09-07 時点）
+
+以下は P2 フェーズとして未着手・提案段階のもの。明示的な承認後に着手。
+
+1. **P2-INDEX-SX5E** — EuroStoxx 50 (SX5E) の正しい index source 調査（Stooq / keyless / EODHD 有料 INDX / 公式ソース）。現在唯一の `UNAVAILABLE` 銘柄。`^SX5E`/`STOXX50E.F`/`SX5E.F` は取得不可、`^STOXX50` は MUTUALFUND のため指数置換不可。ETF/先物への置換は禁止（provenance 犠牲にして 43/43 を目指さない）。
+2. **P2-HOLIDAY** — 営業日・祝日判定精度向上。主要市場の軽量祝日カレンダー（固定リスト or keyless API）を `MARKETS` セッション状態へ反映。FX/暗号/先物の「前営業日」選択精度向上。
+3. **P2-PROVENANCE-UI** — カード表面での出所・基準時刻の一覧性向上。現在は詳細ドロワー内のみ provenance を表示。一覧・カードでも軽量に表示。
+4. **P2-ALERT** — STALE / UNAVAILABLE 発生時の Discord アラート。P2-VER2 で `verify-provider.mjs` の死コード化を指摘済み。健全性スナップショット出力と組み合わせて通知。
+5. **P2-YEN-EXPAND** — ACWI 円換算参考（P1-YEN）の米国株19銘柄への展開。P1-YEN で温存した拡張案。期間一致ゲート・provenance 設計を流用。
+6. **P2-ACCEPTANCE** — 「16/16 受入セット」の機械判定化。`ACCEPTANCE_IDS`（16銘柄）をコード化し、ヘルス/受入エンドポイントで受入ラインを機械的に返す。16/16 は引き続きユーザー側受入確認セット（アプリ内定数なし）の定義を維持。実装は行わず、将来の自動化案として保持。
 
 ---
 
