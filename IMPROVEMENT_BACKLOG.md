@@ -128,13 +128,23 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 - **将来拡張**: 米国株19銘柄への展開、指数（要取得復旧）、EUR/GBP/HKD 経由の欧州・英国・香港・豪州市場の円影響。
 - **見積**: S–M（設計承認含む）
 
-### P1-FTSE FTSE 100 のカバー（調査→実装候補）
-- **証拠**: `instruments.mjs` に `FTSE` 登録あり、`eodhd.mjs` の `INDEX_SYMBOLS` に FTSE なし（EODHD INDX リストで解決せず意図的省略）。結果 `UNAVAILABLE/COVERAGE_PENDING` が永続。
-- **調査（実装前に確認）**:
-  1. Yahoo Finance `^FTSE` fallback の実用性（他指数は既に Yahoo fallback 利用済み）。
-  2. **Cloudflare Workers からの取得可否**（CoinGecko が Workers egress を IP ブロックした前例あり。Yahoo chart は coingecko/metal で動いているため見込み大だが確認要）。
-  3. 表示上の provenance 分類（EOD? close-only? バッジ表記）。
-- **実装候補化**: 上記3点確認後、`INDEX_SYMBOLS` に FTSE を追加し Yahoo fallback を有効化。
+### P1-FTSE FTSE 100 のカバー（調査→実装完了）
+- **状態**: Completed
+- **実装日**: 2026-09-07
+- **採用方針（承認済み）**:
+  - **対象**: FTSE 100 指数そのもののみ。ETF・先物への置換は禁止（provenance ガードで強制）。
+  - **専用 provider**: `server/providers/yahoo-ftse.mjs`（`YAHOO_FINANCE_FTSE`）を新規作成。`market-service.mjs` に**常時登録**（EODHD_API_TOKEN の有無に非依存）。
+  - **拒否理由（eodhd内fallback不採用）**: `market-service.mjs` は最終的に `quote.provider` を `provider.id` で上書きするため、EODHD内部でYahooを使うと provenance が `EODHD_EOD` になってしまう。Yahoo `^FTSE` は keyless なので token 依存にすべきではない。
+  - **instrumentType 検証**: `meta.instrumentType === 'INDEX'` を必ず確認。非INDEXなら例外で reject（ETF/先物誤混入防止）。
+  - **asOf**: `meta.regularMarketTime`（Unix秒）を使用。**latest daily bar の日付は代用しない**。
+  - **status**: Yahoo metadata で遅延確認可能 → `DELAYED`、不可 → `UNVERIFIED`（EOD固定はしない）。
+  - **deliveryLabel**: `YAHOO FINANCE — FTSE 100 INDEX`
+  - **previousClose**: `regularMarketPrice` の quote日より前で直近に確定した daily bar close。`当日未確定barは previousClose にしない`。`previousCloseAsOf` も保持。
+  - **daily bars**: 同一 Yahoo `^FTSE` chart 系列を使用。FTSE bars 初回取得時に外部リクエスト1件追加（既存15分キャッシュ対象）。「egress 0」とは扱わない。
+  - **障害分離**: Yahoo FTSE 取得失敗時は FTSE のみ `STALE`/`UNAVAILABLE`。他指数(EODHD)へ影響なし。
+- **変更ファイル**: `server/providers/yahoo-ftse.mjs`（新規）、`server/market-service.mjs`（常時登録 + bars deliveryLabel マッピング追加）、`test/yahoo-ftse.test.mjs`（新規）。
+- **テスト**: `YAHOO_FINANCE_FTSE supports FTSE only`（他指数 false）、`^FTSE` 利用、`instrumentType INDEX` 検証、`regularMarketPrice` 正常、`asOf` が `regularMarketTime` 由来、`previousClose` が直前確定日足、`previousCloseAsOf` 正常、当日未確定barをpreviousCloseにしない、Yahoo障害時FTSEのみ失敗、他指数routing回帰なし、provenance `YAHOO_FINANCE_FTSE`、FTSE bars 取得可能。
+- **確認結果**: `npm test` 36/36 PASS（既存27 + P1-FTSE 9）。GitHub main push 済み（`4421002`）。Cloudflare 自動 Deploy 確認済み。本番 `/api/v1/dashboard`: `instrumentCount 43`、`FTSE` が `UNAVAILABLE` から `UNVERIFIED` に変化、`provider=YAHOO_FINANCE_FTSE`、`price=10831.09`、`asOf=2026-09-04T15:35:30Z`、`prevClose=10831.5`、`prevCloseAsOf=2026-09-03`、`deliveryLabel=YAHOO FINANCE — FTSE 100 INDEX`。FTSE 詳細 bars 正常（7本、同一 Yahoo 系列）。既存42銘柄に回帰なし。
 - **見積**: S（調査含む）
 
 ---
