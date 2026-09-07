@@ -23,20 +23,12 @@ function asIso(unixSecondsOrNull) {
   return new Date(ms).toISOString();
 }
 
-async function requestChart() {
-  const url = new URL(`${API_BASE}/${encodeURIComponent(SYMBOL)}`);
-  url.searchParams.set('range', '7d');
-  url.searchParams.set('interval', '1d');
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(12_000),
-    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
-  });
-  if (!response.ok) throw new Error(`provider_http_${response.status}`);
-  const payload = await response.json();
-  const result = payload?.chart?.result?.[0];
-  if (!result) throw new Error('provider_empty_payload');
-  return result;
-}
+// Per-symbol short-lived chart memo (same-instance only; no cross-instance
+// guarantee). Avoids a duplicate Yahoo chart fetch when getDailyBars() is called
+// shortly after getQuotes(). Stale memo is never treated as fresh and is never
+// used to fabricate data on provider failure. Keyed per provider instance so
+// tests and concurrent callers do not leak state across instances.
+const CHART_MEMO_MS = 15 * 60 * 1000;
 
 function normaliseBars(result) {
   const timestamps = result?.timestamp || [];
@@ -58,9 +50,27 @@ function statusFromMeta(meta) {
 }
 
 export function createYahooFtseProvider() {
+  const chartMemo = new Map(); // symbol -> { chart, fetchedAt }
+  async function requestChart() {
+    const memo = chartMemo.get(SYMBOL);
+    if (memo && Date.now() - memo.fetchedAt < CHART_MEMO_MS) return memo.chart;
+    const url = new URL(`${API_BASE}/${encodeURIComponent(SYMBOL)}`);
+    url.searchParams.set('range', '3mo');
+    url.searchParams.set('interval', '1d');
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
+    });
+    if (!response.ok) throw new Error(`provider_http_${response.status}`);
+    const payload = await response.json();
+    const result = payload?.chart?.result?.[0];
+    if (!result) throw new Error('provider_empty_payload');
+    chartMemo.set(SYMBOL, { chart: result, fetchedAt: Date.now() });
+    return result;
+  }
   return {
     id: 'YAHOO_FINANCE_FTSE',
-    minimumRefreshMs: 24 * 60 * 60 * 1000,
+    minimumRefreshMs: 30 * 60 * 1000,
     supports(instrument) { return instrument.id === FTSE_ID; },
     supportsDailyBars(instrument) { return instrument.id === FTSE_ID; },
     async getQuotes(requestedInstruments) {

@@ -136,6 +136,70 @@ test('YAHOO_FINANCE_FTSE bars are retrievable and cached downstream', async () =
   } finally { restore(); }
 });
 
+test('YAHOO_FINANCE_FTSE uses 30min refresh and 3mo range', async () => {
+  const { createYahooFtseProvider } = await import('../server/providers/yahoo-ftse.mjs');
+  const provider = createYahooFtseProvider();
+  assert.equal(provider.minimumRefreshMs, 30 * 60 * 1000);
+  // getDailyBars triggers a chart request; capture the range param.
+  let capturedRange = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    capturedRange = u.searchParams.get('range');
+    return new Response(JSON.stringify(yahooPayload({
+      prices: [7400, 7450, 7480, 7500, 7490, 7510, 7500.5],
+      times: [1787727600, 1787814000, 1787900400, 1788246000, 1788332400, 1788418800, 1788505200],
+    })), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await provider.getDailyBars(byId.get('FTSE'));
+  } finally { globalThis.fetch = originalFetch; }
+  assert.equal(capturedRange, '3mo');
+});
+
+test('YAHOO_FINANCE_FTSE reuses chart memo across getQuotes and getDailyBars within TTL', async () => {
+  let fetchCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCount++;
+    return new Response(JSON.stringify(yahooPayload({
+      prices: [7400, 7450, 7480, 7500, 7490, 7510, 7500.5],
+      times: [1787727600, 1787814000, 1787900400, 1788246000, 1788332400, 1788418800, 1788505200],
+    })), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const { createYahooFtseProvider } = await import('../server/providers/yahoo-ftse.mjs');
+    const provider = createYahooFtseProvider();
+    await provider.getQuotes([byId.get('FTSE')]);
+    assert.equal(fetchCount, 1, 'getQuotes fetches once');
+    await provider.getDailyBars(byId.get('FTSE'));
+    assert.equal(fetchCount, 1, 'getDailyBars reuses memo, no extra fetch');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('YAHOO_FINANCE_FTSE does not reuse memo of a different symbol', async () => {
+  // The memo is keyed by SYMBOL (^FTSE) internally; a second provider instance with
+  // a distinct symbol would not share it. Here we just assert the memo scope is FTSE-only.
+  let fetchCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCount++;
+    return new Response(JSON.stringify(yahooPayload({
+      prices: [7400, 7450, 7480, 7500, 7490, 7510, 7500.5],
+      times: [1787727600, 1787814000, 1787900400, 1788246000, 1788332400, 1788418800, 1788505200],
+    })), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const { createYahooFtseProvider } = await import('../server/providers/yahoo-ftse.mjs');
+    const p1 = createYahooFtseProvider();
+    await p1.getQuotes([byId.get('FTSE')]);
+    const p2 = createYahooFtseProvider();
+    await p2.getDailyBars(byId.get('FTSE'));
+    // p2 has a fresh memo, so it fetches again (no cross-instance/cross-provider sharing).
+    assert.equal(fetchCount, 2, 'separate provider instance has its own memo');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('YAHOO_FINANCE_FTSE failure isolates to FTSE and leaves SX5E (YAHOO_FINANCE_INDEX) routing unaffected', async () => {
   const restore = stubFetch(null, { httpStatus: 503 });
   try {

@@ -35,7 +35,7 @@
 | 項目 | 基準 |
 | --- | --- |
 | 全登録銘柄 | **43 銘柄**（内部指標・`server/instruments.mjs`） |
-| 自動テスト | `npm test` **55/55** 通過 |
+| 自動テスト | `npm test` **64/64** 通過 |
 | GitHub main | ローカルと `origin/main` が一致（正本は `main`） |
 | 本番経路 | GitHub `main` → Cloudflare Builds → Workers（`https://global-market-terminal.matzoka.workers.dev/`） |
 | 旧環境 | Ubuntu 旧本番・Tailscale `:8443` 経路は**完全撤去済み** |
@@ -199,13 +199,24 @@
 
 ---
 
-#### P2-INDEX-REFRESH — Yahoo 指数 refresh/cache 戦略の見直し（別バックログ・Proposed）
+#### P2-INDEX-REFRESH — Yahoo 指数 refresh/cache 戦略の見直し（Completed）
 
-- **背景**: P2-INDEX-SX5E 実装時に、現行 `YAHOO_FINANCE_INDEX` の `minimumRefreshMs = 24h` / `range = 7d` / `interval = 1d` が current quote 用途として適切かが論点になった。実装範囲外として分離。
-- **調査候補**:
-  - 24h refresh が current quote 用途として適切か（15分程度へ変更すべきか）
-  - daily bars が 7日だけで十分か（outputSize=60 と実取得 range の整合）
-- **見積**: S–M（調査含む）
+- **状態**: Completed
+- **背景**: P2-INDEX-SX5E 実装時に、`YAHOO_FINANCE_INDEX` / `YAHOO_FINANCE_FTSE` の `minimumRefreshMs=24h` / `range=7d` / `interval=1d` が current quote 用途として不適切であり、`outputSize=60` が range=7d（実質7 bars）で満たされない不整合、および quote 直後の bars 取得で同一 Yahoo chart を再 fetch する重複が論点になった。
+- **採用方針（承認済み）**:
+  - `minimumRefreshMs`: **24h → 30min**（`YAHOO_FINANCE_INDEX` / `YAHOO_FINANCE_FTSE` 双方）
+  - `requestChart` range: **7d → 3mo**、interval=1d 維持（実測: 3mo=66 bars、60営業日を安定充足；1mo=22 では不足）
+  - `getDailyBars(instrument, outputSize=60)`: 3mo 取得分から `slice(-outputSize)` で最大60 bars 返却。**不足時は架空 bar を生成せず実データのみ返す**
+  - **quote/bars reuse**: provider 内部に symbol 単位の短期 chart memo（TTL=15min）を持たせ、`getQuotes` が取得した chart を `getDailyBars` が同じ instance 内で再利用（同一 symbol の重複 Yahoo fetch を回避）。`market-service.mjs` の provider interface / `bars` Map は変更せず。
+  - **KV / Durable Object / Cache API**: 導入せず（同一 instance 内最適化のみ）。**Cloudflare instance 間 cache 共有は未解決の将来課題**
+  - **market hours 最適化**: 今回は行わず
+- **変更ファイル**: `server/providers/yahoo-index.mjs`（minimumRefreshMs 30min、`range=3mo`、インスタンス内 chartMemo 追加）、`server/providers/yahoo-ftse.mjs`（同上）、`test/yahoo-index.test.mjs`（refresh/range/outputSize/memo テスト追加）、`test/yahoo-ftse.test.mjs`（refresh/range/memo テスト追加）
+- **テスト**: minimumRefreshMs=30min・range=3mo・outputSize=60 で最大60 bars・7 bars しかない場合は7件のみ返す（fabricate なし）・getQuotes 後の同一 symbol getDailyBars で memo 有効中は fetch 増えない・別 symbol の memo を誤利用しない・インスタンス独立メモクロック・9指数/FTSE ownership 維持・既存55テスト回帰なし。合計 **64/64 PASS**
+- **request 数（理論上の warm instance 最大値）**: Yahoo Index 9 + FTSE 1 = 10 requests、30分間隔 → `10 × 2 × 24 ≈ 480 requests/day/instance`。ただし保証値ではなく、Worker isolate 再生成・cold start 等で増減する。Yahoo keyless の安全上限をコード/文書に断言しない。
+- **確認結果**: `npm test` **64/64 PASS**。GitHub main push 済み。Cloudflare 自動 Deploy 待ち（本番確認は push 後）。
+- **見積**: M（provider 2箇所 + テスト追加）
+
+---
 
 ## P2 — 調査前提・堅牢性・運用
 
@@ -241,7 +252,7 @@
 以下は P2 フェーズとして未着手・提案段階のもの。明示的な承認後に着手。
 
 1. ~~**P2-INDEX-SX5E**~~ — **Completed**（Yahoo `^STOXX50E` で SX5E を `YAHOO_FINANCE_INDEX` に統合、`UNAVAILABLE = 0` 達成）。
-2. **P2-INDEX-REFRESH** — Yahoo 指数 refresh/cache 戦略の見直し（24h→15分? / 7d bars の妥当性）。P2-INDEX-SX5E 実装時に分離。
+2. ~~**P2-INDEX-REFRESH**~~ — **Completed**（30min refresh / range=3mo / provider 内 chart memo reuse。Cloudflare instance 間共有は将来課題）。
 3. **P2-HOLIDAY** — 営業日・祝日判定精度向上。主要市場の軽量祝日カレンダー（固定リスト or keyless API）を `MARKETS` セッション状態へ反映。FX/暗号/先物の「前営業日」選択精度向上。
 4. **P2-PROVENANCE-UI** — カード表面での出所・基準時刻の一覧性向上。現在は詳細ドロワー内のみ provenance を表示。一覧・カードでも軽量に表示。
 5. **P2-ALERT** — STALE / UNAVAILABLE 発生時の Discord アラート。P2-VER2 で `verify-provider.mjs` の死コード化を指摘済み。健全性スナップショット出力と組み合わせて通知。

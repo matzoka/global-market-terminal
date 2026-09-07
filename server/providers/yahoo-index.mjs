@@ -34,9 +34,19 @@ function asIso(unixSecondsOrNull) {
   return new Date(ms).toISOString();
 }
 
-async function requestChart(symbol) {
+// Per-symbol short-lived chart memo (same-instance only; no cross-instance
+// guarantee). Avoids a duplicate Yahoo chart fetch when getDailyBars() is called
+// shortly after getQuotes() for the same symbol. Stale memo is never treated as
+// fresh and is never used to fabricate data on provider failure.
+const CHART_MEMO_MS = 15 * 60 * 1000;
+
+async function requestChart(chartMemo, symbol, { allowMemo = true } = {}) {
+  if (allowMemo) {
+    const memo = chartMemo.get(symbol);
+    if (memo && Date.now() - memo.fetchedAt < CHART_MEMO_MS) return memo.chart;
+  }
   const url = new URL(`${API_BASE}/${encodeURIComponent(symbol)}`);
-  url.searchParams.set('range', '7d');
+  url.searchParams.set('range', '3mo');
   url.searchParams.set('interval', '1d');
   const response = await fetch(url, {
     signal: AbortSignal.timeout(12_000),
@@ -46,6 +56,7 @@ async function requestChart(symbol) {
   const payload = await response.json();
   const result = payload?.chart?.result?.[0];
   if (!result) throw new Error('provider_empty_payload');
+  chartMemo.set(symbol, { chart: result, fetchedAt: Date.now() });
   return result;
 }
 
@@ -67,9 +78,10 @@ function statusFromMeta(meta) {
 }
 
 export function createYahooIndexProvider() {
+  const chartMemo = new Map(); // symbol -> { chart, fetchedAt }
   return {
     id: 'YAHOO_FINANCE_INDEX',
-    minimumRefreshMs: 24 * 60 * 60 * 1000,
+    minimumRefreshMs: 30 * 60 * 1000,
     supports(instrument) { return instrument.kind === 'index' && Boolean(INDEX_SYMBOL[instrument.id]); },
     supportsDailyBars(instrument) { return instrument.kind === 'index' && Boolean(INDEX_SYMBOL[instrument.id]); },
     async getQuotes(requestedInstruments) {
@@ -77,7 +89,7 @@ export function createYahooIndexProvider() {
       for (const instrument of requestedInstruments) {
         const symbol = INDEX_SYMBOL[instrument.id];
         if (!symbol) continue;
-        const chart = await requestChart(symbol);
+        const chart = await requestChart(chartMemo, symbol);
         const meta = chart.meta || {};
         // Provenance guard: only the INDEX instrument itself qualifies.
         if (meta.instrumentType !== 'INDEX') {
@@ -117,7 +129,7 @@ export function createYahooIndexProvider() {
     async getDailyBars(instrument, outputSize = 60) {
       const symbol = INDEX_SYMBOL[instrument.id];
       if (!symbol) return [];
-      const result = await requestChart(symbol);
+      const result = await requestChart(chartMemo, symbol);
       const bars = normaliseBars(result, symbol);
       if (bars.length < 2) throw new Error('provider_insufficient_bars');
       return bars.slice(-Math.max(2, outputSize));
