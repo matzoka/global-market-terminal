@@ -136,13 +136,13 @@ test('YAHOO_FINANCE_FTSE bars are retrievable and cached downstream', async () =
   } finally { restore(); }
 });
 
-test('YAHOO_FINANCE_FTSE failure isolates to FTSE and leaves other indices routed', async () => {
+test('YAHOO_FINANCE_FTSE failure isolates to FTSE and leaves SX5E (EODHD) routing unaffected', async () => {
   const restore = stubFetch(null, { httpStatus: 503 });
   try {
     const { createYahooFtseProvider } = await import('../server/providers/yahoo-ftse.mjs');
     await assert.rejects(() => createYahooFtseProvider().getQuotes([byId.get('FTSE')]), /provider_http_503/);
   } finally { restore(); }
-  // EODHD routing for other indices must remain unaffected (no overlap).
+  // EODHD still owns SX5E after Phase A; its routing must be unaffected by FTSE failure.
   const { createEodhdProvider } = await import('../server/providers/eodhd.mjs');
-  assert.equal(createEodhdProvider('token').supports(byId.get('SPX')), true);
+  assert.equal(createEodhdProvider('token').supports(byId.get('SX5E')), true);
 });

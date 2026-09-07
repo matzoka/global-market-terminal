@@ -1,17 +1,14 @@
 const API_BASE = 'https://eodhd.com/api';
 
-// Yahoo Finance index symbols (keyless fallback for daily bars when the EODHD
-// token is missing or the upstream call fails).
-const YAHOO_INDEX = Object.freeze({
-  SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', DAX: '^GDAXI', N225: '^N225', HSI: '^HSI',
-});
+// Yahoo Finance index symbols are now owned by the dedicated YAHOO_FINANCE_INDEX
+// provider (P2-INDEX Phase A). EODHD no longer claims these for quote or bars.
 
-// Verified against EODHD's INDX symbol list on 2026-08-15. FTSE 100 did not
-// resolve to the underlying index in that list, so it is deliberately omitted.
+// In P2-INDEX Phase A, the following eight indices moved to YAHOO_FINANCE_INDEX:
+//   SPX, NDX, DJI, DAX, N225, HSI, ASX, SSE
+// EODHD retains ownership ONLY of SX5E (EuroStoxx 50), which has no safe Yahoo
+// INDEX symbol; its coverage is tracked separately as P2-INDEX-SX5E.
 const INDEX_SYMBOLS = Object.freeze({
-  SPX: 'GSPC.INDX', NDX: 'NDX.INDX', DJI: 'DJI.INDX', SX5E: 'SX5E.INDX',
-  DAX: 'GDAXI.INDX', N225: 'N225.INDX', HSI: 'HSI.INDX',
-  SSE: 'SSEC.INDX', ASX: 'AXJO.INDX',
+  SX5E: 'SX5E.INDX',
 });
 
 function number(value) {
@@ -76,25 +73,11 @@ export function createEodhdProvider(token) {
         const bars = normaliseBars(raw).slice(-Math.max(2, outputSize));
         if (bars.length >= 2) return bars;
       } catch {
-        // fall through to Yahoo Finance keyless fallback
+        // EODHD index coverage is limited (SX5E only after Phase A); on failure
+        // return empty so market-service can mark STALE/UNAVAILABLE without a
+        // cross-provider fallback that would mislabel provenance.
       }
-      const ySymbol = YAHOO_INDEX[instrument.id];
-      if (!ySymbol) return [];
-      const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}`);
-      url.searchParams.set('range', '6mo');
-      url.searchParams.set('interval', '1d');
-      const response = await fetch(url, { signal: AbortSignal.timeout(12_000), headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' } });
-      if (!response.ok) throw new Error(`provider_http_${response.status}`);
-      const payload = await response.json();
-      const timestamps = payload?.chart?.result?.[0]?.timestamp || [];
-      const closes = payload?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
-      const rows = [];
-      for (let i = 0; i < timestamps.length; i++) {
-        const price = number(closes[i]);
-        if (price == null || price <= 0) continue;
-        rows.push({ time: new Date(Number(timestamps[i]) * 1000).toISOString().slice(0, 10), close: price, closeOnly: true });
-      }
-      return rows.slice(-Math.max(2, outputSize));
+      return [];
     },
   };
 }

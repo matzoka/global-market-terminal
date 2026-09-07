@@ -6,6 +6,7 @@ import { createFrankfurterProvider } from '../server/providers/frankfurter.mjs';
 
 const XAU = { id: 'XAU', kind: 'metal', displaySymbol: 'XAU/USD' };
 const SPX = { id: 'SPX', kind: 'index', displaySymbol: 'S&P 500' };
+const SX5E = { id: 'SX5E', kind: 'index', displaySymbol: 'EURO STOXX 50' };
 
 test('Metals.dev spot provider no longer supplies daily bars (futures moved to dedicated provider)', () => {
   const p = createMetalsDevProvider('TEST_KEY');
@@ -29,12 +30,14 @@ test('Yahoo metal futures provider supplies XAU daily bars from GC=F', async () 
   }
 });
 
-test('EODHD getDailyBars covers index instruments', async () => {
+test('EODHD getDailyBars still covers SX5E (other indices relocated to YAHOO_FINANCE_INDEX)', async () => {
   const p = createEodhdProvider('TEST_TOKEN');
-  assert.equal(p.supportsDailyBars(SPX), true);
+  // After P2-INDEX Phase A, only SX5E remains under EODHD ownership.
+  assert.equal(p.supportsDailyBars(SPX), false);
+  assert.equal(p.supportsDailyBars(SX5E), true);
   // Network call may fail in sandbox; just assert shape if it returns.
   try {
-    const bars = await p.getDailyBars(SPX, 60);
+    const bars = await p.getDailyBars(SX5E, 60);
     assert.ok(Array.isArray(bars));
   } catch (err) {
     // Allow network failure in CI; only assert supportsDailyBars above.
