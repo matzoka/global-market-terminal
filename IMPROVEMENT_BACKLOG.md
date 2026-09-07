@@ -149,6 +149,33 @@ FX/暗号/金属とも値を返していることを curl で確認済み。
 
 ---
 
+### P2-INDEX 9指数 quote の UNAVAILABLE 解消（調査→Phase A 実装完了）
+
+- **状態**: Phase A Completed（SX5E は別バックログ P2-INDEX-SX5E として残留）
+- **調査結果（原因）**: 9指数は全て `reason=provider_request_failed`。EODHD `.INDX` エンドポイントは基本プランに含まれず追加有料アドオン（Indices Historical Constituents: $29.99/mo）が必要。認証なし/demo は `Unauthenticated`/`Forbidden`。したがって「EODHD にシンボルが存在しない」のではなく、**リクエスト失敗（認証/plan制約）** が真因。
+- **Phase A 採用方針（承認済み）**:
+  - 新規 `server/providers/yahoo-index.mjs`（`YAHOO_FINANCE_INDEX`）を作成。P1-FTSE と同じ設計原則（instrumentType INDEX ガード、regularMarketTime を asOf、status=DELAYED/UNVERIFIED、deliveryLabel `YAHOO FINANCE — INDEX REFERENCE`）。
+  - 8指数を Yahoo 指数そのものから取得: SPX=`^GSPC`、NDX=`^NDX`、DJI=`^DJI`、DAX=`^GDAXI`、N225=`^N225`、HSI=`^HSI`、ASX=`^AXJO`、SSE=`000001.SS`（**`^SSE` は使用禁止**、誤値110.33が返るため）。
+  - **provider ownership 重複回避**: EODHD_EOD の `INDEX_SYMBOLS` から8指数を削除し `YAHOO_FINANCE_INDEX` を唯一の quote/bars owner に。EODHD は SX5E のみ保持（Yahoo で EuroStoxx50 指数を安全に取得できる symbol なしのため）。
+  - bars も `YAHOO_FINANCE_INDEX` が担当、`providerSymbol` = 実際の Yahoo symbol。EODHD の Yahoo fallback を削除（provenance 誤認防止）。
+- **変更ファイル**: `server/providers/yahoo-index.mjs`（新規）、`server/providers/eodhd.mjs`（INDEX_SYMBOLS を SX5E のみに削減 + fallback 削除）、`server/market-service.mjs`（常時登録 + bars deliveryLabel 追加）、`test/yahoo-index.test.mjs`（新規）、`test/market-service.test.mjs` / `test/provider_bars.mjs` / `test/yahoo-ftse.test.mjs`（既存テスト修正）。
+- **テスト**: 8指数→正しい Yahoo symbol・instrumentType INDEX 検証・非INDEX reject・asOf=regularMarketTime・previousClose=直前確定bar・providerSymbol 正常・YAHOO_FINANCE_INDEX が8指数の quote/bars owner・EODHD が8指数を ownership しない・SX5E は変更されない・FTSE/金属 bars は別 provider 維持・既存 FX/crypto/equity 回帰なし。
+- **確認結果**: `npm test` 53/53 PASS（既存45 + P2-INDEX 8）。GitHub main push 済み（`f745bbb`）。Cloudflare 自動 Deploy 確認済み。本番: 8指数すべて `UNAVAILABLE` から `UNVERIFIED` に変化、`provider=YAHOO_FINANCE_INDEX`、`providerSymbol` 正常（SSE=`000001.SS`）。`instrumentCount 43`、SX5E のみ `UNAVAILABLE`（EODHD_EOD）として既知の未取得で残存。既存銘柄に回帰なし。
+- **見積**: M（調査+設計+実装）
+
+#### P2-INDEX-SX5E — EuroStoxx 50 (SX5E) のカバー（別バックログ・未着手）
+
+- **状態**: Proposed
+- **背景**: Phase A で SPX/NDX/DJI/DAX/N225/HSI/ASX/SSE は Yahoo 指数でカバー完了。SX5E（EuroStoxx 50）のみ Yahoo で指数そのものを安全に取得できる symbol を確認できず（^SX5E / STOXX50E.F / SX5E.F いずれも取得不可、^STOXX50 は MUTUALFUND）残留。
+- **方針（案）**: ETF / mutual fund / futures への置換は禁止（provenance 犠牲にして 43/43 を目指さない）。以下を調査:
+  - Stooq（`^stoxx50` 等 keyless）
+  - その他 keyless index source
+  - EODHD 有料 INDX アドオン購入
+  - 公式/準公式ソース
+- **見積**: S–M（調査含む）
+
+---
+
 ## P2 — 調査前提・堅牢性・運用
 
 ### P2-VER FX/暗号未取得表示の過去事例（解消済み・監視継続）
