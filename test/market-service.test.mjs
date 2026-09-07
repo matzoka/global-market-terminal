@@ -30,25 +30,21 @@ test('Alpaca quote exposes a verified IEX daily-dollar-volume area metric', asyn
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('free EODHD adapter keeps only SX5E after P2-INDEX Phase A relocation', async () => {
+test('EODHD adapter claims no indices after P2-INDEX-SX5E relocation', async () => {
   const { createEodhdProvider } = await import('../server/providers/eodhd.mjs');
   const provider = createEodhdProvider('unused-for-this-test');
-  // The eight indices moved to YAHOO_FINANCE_INDEX; EODHD must no longer claim them.
-  ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE'].forEach((id) => assert.equal(provider.supports(byId.get(id)), false, `${id} should not be owned by EODHD`));
-  // SX5E remains with EODHD pending Phase B investigation.
-  assert.equal(provider.supports(byId.get('SX5E')), true);
-  assert.equal(provider.supportsDailyBars(byId.get('SX5E')), true);
+  // All nine indices moved to YAHOO_FINANCE_INDEX; EODHD must no longer claim any.
+  ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE', 'SX5E'].forEach((id) => assert.equal(provider.supports(byId.get(id)), false, `${id} should not be owned by EODHD`));
   assert.equal(provider.minimumRefreshMs, 24 * 60 * 60 * 1000);
 });
 
-test('YAHOO_FINANCE_INDEX is the sole quote owner of the eight relocated indices', async () => {
+test('YAHOO_FINANCE_INDEX is the sole quote owner of all nine indices including SX5E', async () => {
   const { createYahooIndexProvider } = await import('../server/providers/yahoo-index.mjs');
   const provider = createYahooIndexProvider();
-  ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE'].forEach((id) => {
+  ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE', 'SX5E'].forEach((id) => {
     assert.equal(provider.supports(byId.get(id)), true, `${id} quote owner`);
     assert.equal(provider.supportsDailyBars(byId.get(id)), true, `${id} bars owner`);
   });
-  assert.equal(provider.supports(byId.get('SX5E')), false);
 });
 
 test('free Metals.Dev adapter covers all four cards and is quota limited', async () => {

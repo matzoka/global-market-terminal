@@ -30,19 +30,11 @@ test('Yahoo metal futures provider supplies XAU daily bars from GC=F', async () 
   }
 });
 
-test('EODHD getDailyBars still covers SX5E (other indices relocated to YAHOO_FINANCE_INDEX)', async () => {
+test('EODHD claims no index bars after P2-INDEX-SX5E (all moved to YAHOO_FINANCE_INDEX)', async () => {
   const p = createEodhdProvider('TEST_TOKEN');
-  // After P2-INDEX Phase A, only SX5E remains under EODHD ownership.
+  // After P2-INDEX-SX5E, EODHD owns no indices; YAHOO_FINANCE_INDEX owns all nine.
   assert.equal(p.supportsDailyBars(SPX), false);
-  assert.equal(p.supportsDailyBars(SX5E), true);
-  // Network call may fail in sandbox; just assert shape if it returns.
-  try {
-    const bars = await p.getDailyBars(SX5E, 60);
-    assert.ok(Array.isArray(bars));
-  } catch (err) {
-    // Allow network failure in CI; only assert supportsDailyBars above.
-    assert.ok(err.message.startsWith('provider_') || err.message.includes('fetch'), 'expected provider/network error');
-  }
+  assert.equal(p.supportsDailyBars(SX5E), false);
 });
 
 test('Frankfurter getDailyBars returns ECB daily FX series', async () => {

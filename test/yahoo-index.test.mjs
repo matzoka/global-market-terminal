@@ -12,8 +12,8 @@ function stubFetch(chartResult, { httpStatus = 200 } = {}) {
   return () => { globalThis.fetch = originalFetch; };
 }
 
-const INDEX_IDS = ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE'];
-const YAHOO_SYMBOL = { SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', DAX: '^GDAXI', N225: '^N225', HSI: '^HSI', ASX: '^AXJO', SSE: '000001.SS' };
+const INDEX_IDS = ['SPX', 'NDX', 'DJI', 'DAX', 'N225', 'HSI', 'ASX', 'SSE', 'SX5E'];
+const YAHOO_SYMBOL = { SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', DAX: '^GDAXI', N225: '^N225', HSI: '^HSI', ASX: '^AXJO', SSE: '000001.SS', SX5E: '^STOXX50E' };
 
 function yahooIndexPayload(symbol, instrumentType = 'INDEX', regularMarketPrice = 5000, regularMarketTime = 1788536130, prices, times) {
   return {
@@ -28,13 +28,11 @@ function yahooIndexPayload(symbol, instrumentType = 'INDEX', regularMarketPrice 
   };
 }
 
-test('YAHOO_FINANCE_INDEX supports the eight relocated indices only', async () => {
+test('YAHOO_FINANCE_INDEX supports all nine indices including SX5E', async () => {
   const { createYahooIndexProvider } = await import('../server/providers/yahoo-index.mjs');
   const provider = createYahooIndexProvider();
   INDEX_IDS.forEach((id) => assert.equal(provider.supports(byId.get(id)), true));
-  // SX5E remains outside this provider's ownership (handled by EODHD / Phase B).
-  assert.equal(provider.supports(byId.get('SX5E')), false);
-  assert.equal(provider.supportsDailyBars(byId.get('SX5E')), false);
+  INDEX_IDS.forEach((id) => assert.equal(provider.supportsDailyBars(byId.get(id)), true));
   assert.equal(provider.id, 'YAHOO_FINANCE_INDEX');
 });
 
@@ -96,4 +94,31 @@ test('SSE uses 000001.SS and rejects ^SSE', async () => {
   const { createYahooIndexProvider } = await import('../server/providers/yahoo-index.mjs');
   assert.equal(createYahooIndexProvider().supports(byId.get('SSE')), true);
   assert.equal(INDEX_IDS.includes('SSE'), true);
+});
+
+test('SX5E uses ^STOXX50E and resolves Euro Stoxx 50 INDEX', async () => {
+  // Euro Stoxx 50 index itself (not an ETF/future/mutual fund).
+  const restore = stubFetch(yahooIndexPayload('^STOXX50E', 'INDEX', 6403.99, 1788796800, [6485.66, 6420.16, 6368.98, 6362.14, 6382.58, 6392.93, 6403.99], [1788148800, 1788235200, 1788321600, 1788408000, 1788494400, 1788580800, 1788796800]));
+  try {
+    const { createYahooIndexProvider } = await import('../server/providers/yahoo-index.mjs');
+    const quote = (await createYahooIndexProvider().getQuotes([byId.get('SX5E')])).get('SX5E');
+    assert.equal(quote.providerSymbol, '^STOXX50E');
+    assert.ok(Number.isFinite(quote.price) && quote.price > 0);
+    assert.equal(quote.asOf, new Date(1788796800 * 1000).toISOString());
+    assert.equal(quote.deliveryLabel, 'YAHOO FINANCE — INDEX REFERENCE');
+    // previousClose = last bar strictly before current day (currentDay = 2026-09-07,
+    // the 1788796800 bar; 09-06 is a weekend with no bar, so prior bar is 1788580800 = 09-05)
+    assert.equal(quote.previousClose, 6392.93);
+    assert.equal(quote.previousCloseAsOf, '2026-09-05T00:00:00.000Z');
+  } finally { restore(); }
+});
+
+test('SX5E quote symbol mapping verified (Yahoo currency metadata is EUR; display spec unchanged)', async () => {
+  const restore = stubFetch(yahooIndexPayload('^STOXX50E', 'INDEX', 6403.99, 1788796800, [6392.93, 6403.99], [1788580800, 1788796800]));
+  try {
+    const { createYahooIndexProvider } = await import('../server/providers/yahoo-index.mjs');
+    const quote = (await createYahooIndexProvider().getQuotes([byId.get('SX5E')])).get('SX5E');
+    // Per approval the display spec stays INDEX POINTS (no currency change); we only assert mapping.
+    assert.equal(quote.providerSymbol, '^STOXX50E');
+  } finally { restore(); }
 });

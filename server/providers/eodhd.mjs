@@ -1,15 +1,13 @@
 const API_BASE = 'https://eodhd.com/api';
 
 // Yahoo Finance index symbols are now owned by the dedicated YAHOO_FINANCE_INDEX
-// provider (P2-INDEX Phase A). EODHD no longer claims these for quote or bars.
+// provider (P2-INDEX Phase A + P2-INDEX-SX5E). EODHD no longer claims any index
+// for quote or bars; SX5E moved to YAHOO_FINANCE_INDEX (^STOXX50E) as well.
 
-// In P2-INDEX Phase A, the following eight indices moved to YAHOO_FINANCE_INDEX:
-//   SPX, NDX, DJI, DAX, N225, HSI, ASX, SSE
-// EODHD retains ownership ONLY of SX5E (EuroStoxx 50), which has no safe Yahoo
-// INDEX symbol; its coverage is tracked separately as P2-INDEX-SX5E.
-const INDEX_SYMBOLS = Object.freeze({
-  SX5E: 'SX5E.INDX',
-});
+// All nine indices (SPX, NDX, DJI, DAX, N225, HSI, ASX, SSE, SX5E) are now owned
+// by YAHOO_FINANCE_INDEX. EODHD_EOD retains no index symbols; this map is kept
+// empty so supports()/supportsDailyBars() return false for all indices.
+const INDEX_SYMBOLS = Object.freeze({});
 
 function number(value) {
   const parsed = Number(value);

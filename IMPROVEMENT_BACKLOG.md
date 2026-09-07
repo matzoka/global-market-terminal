@@ -35,11 +35,11 @@
 | 項目 | 基準 |
 | --- | --- |
 | 全登録銘柄 | **43 銘柄**（内部指標・`server/instruments.mjs`） |
-| 自動テスト | `npm test` **53/53** 通過 |
+| 自動テスト | `npm test` **55/55** 通過 |
 | GitHub main | ローカルと `origin/main` が一致（正本は `main`） |
 | 本番経路 | GitHub `main` → Cloudflare Builds → Workers（`https://global-market-terminal.matzoka.workers.dev/`） |
 | 旧環境 | Ubuntu 旧本番・Tailscale `:8443` 経路は**完全撤去済み** |
-| UNAVAILABLE | **SX5E のみ**（EuroStoxx 50・別バックログ P2-INDEX-SX5E で調査中）。それ以外の42銘柄はいずれかの provider から値を取得 |
+| UNAVAILABLE | **0**（全43銘柄がいずれかの provider から値を取得。SX5E は P2-INDEX-SX5E で `YAHOO_FINANCE_INDEX`(`^STOXX50E`) からカバー済み） |
 
 現在の quote 状態（43銘柄）:
 
@@ -48,8 +48,7 @@
 | PARTIAL_REALTIME (ALPACA_IEX) | ACWI + 米国株19銘柄 | 20 |
 | EOD (FRANKFURTER_ECB) | FX5 | 5 |
 | DELAYED (COINGECKO_PUBLIC / METALS_DEV_SPOT) | 暗号4 + 金属スポット4 | 8 |
-| UNVERIFIED (YAHOO_FINANCE_FTSE / YAHOO_FINANCE_INDEX) | FTSE + Yahoo index 8銘柄 | 9 |
-| UNAVAILABLE (EODHD_EOD) | SX5E | 1 |
+| UNVERIFIED (YAHOO_FINANCE_FTSE / YAHOO_FINANCE_INDEX) | FTSE + Yahoo index 9銘柄 | 10 |
 
 主要 provider 構成:
 
@@ -58,9 +57,9 @@
 - 暗号 quote: `COINGECKO_PUBLIC`（実態の spot source については既存 provenance 説明を維持）
 - 金属 spot: `METALS_DEV_SPOT`
 - FTSE: `YAHOO_FINANCE_FTSE`
-- 8指数: `YAHOO_FINANCE_INDEX`（SPX=`^GSPC`、NDX=`^NDX`、DJI=`^DJI`、DAX=`^GDAXI`、N225=`^N225`、HSI=`^HSI`、ASX=`^AXJO`、SSE=`000001.SS`）
+- 9指数: `YAHOO_FINANCE_INDEX`（SPX=`^GSPC`、NDX=`^NDX`、DJI=`^DJI`、DAX=`^GDAXI`、N225=`^N225`、HSI=`^HSI`、ASX=`^AXJO`、SSE=`000001.SS`、SX5E=`^STOXX50E`）
 - 金属 bars: `YAHOO_FINANCE_METAL_FUTURES`（XAU=`GC=F`、XAG=`SI=F`、XPT=`PL=F`、XPD=`PA=F`）
-- SX5E: `EODHD_EOD`（現在 UNAVAILABLE）
+- EODHD_EOD: 全指数 ownership を `YAHOO_FINANCE_INDEX` に移譲済み（P2-INDEX Phase A + P2-INDEX-SX5E）。現時点で index を supports しない（空の `INDEX_SYMBOLS` を保持）。
 
 ---
 
@@ -68,7 +67,7 @@
 
 ### 「43 銘柄」＝ 全登録銘柄数（内部指標）
 - `server/instruments.mjs` に登録された全インストルメント。`npm test` も `instruments.length === 43` を検証。
-- FTSE を含む。FTSE は `YAHOO_FINANCE_FTSE` でカバー済み（UNVERIFIED）。現在 UNAVAILABLE なのは SX5E（EuroStoxx 50）のみ、別バックログ P2-INDEX-SX5E で調査中。
+- FTSE を含む。FTSE は `YAHOO_FINANCE_FTSE` でカバー済み（UNVERIFIED）。全43銘柄（SX5E 含む）が `YAHOO_FINANCE_INDEX` 等でカバーされ、UNAVAILABLE は 0。
 
 ### 「16/16」＝ ユーザー側受入確認セット（外部指標・アプリ内定数なし）
 - **コード調査結果**: アプリ内に `16` という定数・カウンターは存在しない。該当箇所:
@@ -175,25 +174,38 @@
 - **Phase A 採用方針（承認済み）**:
   - 新規 `server/providers/yahoo-index.mjs`（`YAHOO_FINANCE_INDEX`）を作成。P1-FTSE と同じ設計原則（instrumentType INDEX ガード、regularMarketTime を asOf、status=DELAYED/UNVERIFIED、deliveryLabel `YAHOO FINANCE — INDEX REFERENCE`）。
   - 8指数を Yahoo 指数そのものから取得: SPX=`^GSPC`、NDX=`^NDX`、DJI=`^DJI`、DAX=`^GDAXI`、N225=`^N225`、HSI=`^HSI`、ASX=`^AXJO`、SSE=`000001.SS`（**`^SSE` は使用禁止**、誤値110.33が返るため）。
-  - **provider ownership 重複回避**: EODHD_EOD の `INDEX_SYMBOLS` から8指数を削除し `YAHOO_FINANCE_INDEX` を唯一の quote/bars owner に。EODHD は SX5E のみ保持（Yahoo で EuroStoxx50 指数を安全に取得できる symbol なしのため）。
+  - **provider ownership 重複回避**: EODHD_EOD の `INDEX_SYMBOLS` から8指数を削除し `YAHOO_FINANCE_INDEX` を唯一の quote/bars owner に（SX5E は Phase A 時点で残留、後述 P2-INDEX-SX5E で解消）。
   - bars も `YAHOO_FINANCE_INDEX` が担当、`providerSymbol` = 実際の Yahoo symbol。EODHD の Yahoo fallback を削除（provenance 誤認防止）。
 - **変更ファイル**: `server/providers/yahoo-index.mjs`（新規）、`server/providers/eodhd.mjs`（INDEX_SYMBOLS を SX5E のみに削減 + fallback 削除）、`server/market-service.mjs`（常時登録 + bars deliveryLabel 追加）、`test/yahoo-index.test.mjs`（新規）、`test/market-service.test.mjs` / `test/provider_bars.mjs` / `test/yahoo-ftse.test.mjs`（既存テスト修正）。
 - **テスト**: 8指数→正しい Yahoo symbol・instrumentType INDEX 検証・非INDEX reject・asOf=regularMarketTime・previousClose=直前確定bar・providerSymbol 正常・YAHOO_FINANCE_INDEX が8指数の quote/bars owner・EODHD が8指数を ownership しない・SX5E は変更されない・FTSE/金属 bars は別 provider 維持・既存 FX/crypto/equity 回帰なし。
 - **確認結果**: `npm test` 53/53 PASS（既存45 + P2-INDEX 8）。GitHub main push 済み（`f745bbb`）。Cloudflare 自動 Deploy 確認済み。本番: 8指数すべて `UNAVAILABLE` から `UNVERIFIED` に変化、`provider=YAHOO_FINANCE_INDEX`、`providerSymbol` 正常（SSE=`000001.SS`）。`instrumentCount 43`、SX5E のみ `UNAVAILABLE`（EODHD_EOD）として既知の未取得で残存。既存銘柄に回帰なし。
 - **見積**: M（調査+設計+実装）
 
-#### P2-INDEX-SX5E — EuroStoxx 50 (SX5E) のカバー（別バックログ・未着手）
+#### P2-INDEX-SX5E — EuroStoxx 50 (SX5E) のカバー（Completed）
 
-- **状態**: Proposed
-- **背景**: Phase A で SPX/NDX/DJI/DAX/N225/HSI/ASX/SSE は Yahoo 指数でカバー完了。SX5E（EuroStoxx 50）のみ Yahoo で指数そのものを安全に取得できる symbol を確認できず（^SX5E / STOXX50E.F / SX5E.F いずれも取得不可、^STOXX50 は MUTUALFUND）残留。
-- **方針（案）**: ETF / mutual fund / futures への置換は禁止（provenance 犠牲にして 43/43 を目指さない）。以下を調査:
-  - Stooq（`^stoxx50` 等 keyless）
-  - その他 keyless index source
-  - EODHD 有料 INDX アドオン購入
-  - 公式/準公式ソース
-- **見積**: S–M（調査含む）
+- **状態**: Completed（P2-INDEX Phase A と同じ設計原則で `YAHOO_FINANCE_INDEX` に統合）
+- **調査結果**: Phase A 時に `^SX5E` / `STOXX50E.F` / `SX5E.F` しか試しておらず、`^STOXX50E` を試していなかったのが原因で残留していた。本調査で `^STOXX50E` を発見・検証:
+  - `instrumentType = INDEX`、`shortName = EURO STOXX 50`（ETF/先物/ミューチュアルファンドではない）
+  - `currency = EUR`、`exchangeName = ZRH`
+  - `regularMarketPrice` finite、daily bars 取得可能
+  - 他 candidate（Stooq `q/l/` CSV は全シンボル 404 で事実上利用不可、EODHD 有料 INDX $29.99/mo は費用対効果なし）は不採用
+- **実装**: `server/providers/yahoo-index.mjs` の `INDEX_SYMBOL` に `SX5E: '^STOXX50E'` を追加（新規 provider なし）。`server/providers/eodhd.mjs` の `INDEX_SYMBOLS` を空にし、EODHD と `YAHOO_FINANCE_INDEX` の ownership 重複を完全排除。
+- **status**: `UNVERIFIED`（Yahoo metadata で delay 確認不能のため）。`currency` 表示仕様は既存8指数と同じ `INDEX POINTS` を維持（Yahoo 実値 EUR への変更は承認外）。
+- **egress**: cold refresh 時の Yahoo 外部 request が9指数分に増（SX5E 追加で +1）。既存 cache/refresh 設計（24h / 7d / 1d）は変更なし。
+- **変更ファイル**: `server/providers/yahoo-index.mjs`（INDEX_SYMBOL 追加）、`server/providers/eodhd.mjs`（INDEX_SYMBOLS 空化 + コメント更新）、`test/yahoo-index.test.mjs`（SX5E 追加 + 既存テスト修正）、`test/market-service.test.mjs`（EODHD が指数を supports しないことの確認に変更）、`test/provider_bars.mjs`（EODHD bars が指数を supports しないことの確認に変更）、`test/yahoo-ftse.test.mjs`（FTSE 障害分離テストを YAHOO_FINANCE_INDEX に SX5E が移った前提へ更新）。
+- **テスト**: 9指数→正しい Yahoo symbol・instrumentType INDEX 検証・asOf=regularMarketTime・previousClose=直前確定bar・providerSymbol 正常・YAHOO_FINANCE_INDEX が9指数の quote/bars owner・EODHD がいずれの指数も ownership しない・FTSE/金属 bars は別 provider 維持・既存 FX/crypto/equity 回帰なし。
+- **確認結果**: `npm test` **55/55 PASS**。GitHub main push 済み。Cloudflare 自動 Deploy 確認済み。本番: `instrumentCount 43`、`UNAVAILABLE = 0`（SX5E が `UNVERIFIED`/`YAHOO_FINANCE_INDEX`/`providerSymbol=^STOXX50E` に変化）。43/43 が値取得可能。
+- **見積**: S（実装は既存 provider への1行追加）
 
 ---
+
+#### P2-INDEX-REFRESH — Yahoo 指数 refresh/cache 戦略の見直し（別バックログ・Proposed）
+
+- **背景**: P2-INDEX-SX5E 実装時に、現行 `YAHOO_FINANCE_INDEX` の `minimumRefreshMs = 24h` / `range = 7d` / `interval = 1d` が current quote 用途として適切かが論点になった。実装範囲外として分離。
+- **調査候補**:
+  - 24h refresh が current quote 用途として適切か（15分程度へ変更すべきか）
+  - daily bars が 7日だけで十分か（outputSize=60 と実取得 range の整合）
+- **見積**: S–M（調査含む）
 
 ## P2 — 調査前提・堅牢性・運用
 
@@ -228,12 +240,13 @@
 
 以下は P2 フェーズとして未着手・提案段階のもの。明示的な承認後に着手。
 
-1. **P2-INDEX-SX5E** — EuroStoxx 50 (SX5E) の正しい index source 調査（Stooq / keyless / EODHD 有料 INDX / 公式ソース）。現在唯一の `UNAVAILABLE` 銘柄。`^SX5E`/`STOXX50E.F`/`SX5E.F` は取得不可、`^STOXX50` は MUTUALFUND のため指数置換不可。ETF/先物への置換は禁止（provenance 犠牲にして 43/43 を目指さない）。
-2. **P2-HOLIDAY** — 営業日・祝日判定精度向上。主要市場の軽量祝日カレンダー（固定リスト or keyless API）を `MARKETS` セッション状態へ反映。FX/暗号/先物の「前営業日」選択精度向上。
-3. **P2-PROVENANCE-UI** — カード表面での出所・基準時刻の一覧性向上。現在は詳細ドロワー内のみ provenance を表示。一覧・カードでも軽量に表示。
-4. **P2-ALERT** — STALE / UNAVAILABLE 発生時の Discord アラート。P2-VER2 で `verify-provider.mjs` の死コード化を指摘済み。健全性スナップショット出力と組み合わせて通知。
-5. **P2-YEN-EXPAND** — ACWI 円換算参考（P1-YEN）の米国株19銘柄への展開。P1-YEN で温存した拡張案。期間一致ゲート・provenance 設計を流用。
-6. **P2-ACCEPTANCE** — 「16/16 受入セット」の機械判定化。`ACCEPTANCE_IDS`（16銘柄）をコード化し、ヘルス/受入エンドポイントで受入ラインを機械的に返す。16/16 は引き続きユーザー側受入確認セット（アプリ内定数なし）の定義を維持。実装は行わず、将来の自動化案として保持。
+1. ~~**P2-INDEX-SX5E**~~ — **Completed**（Yahoo `^STOXX50E` で SX5E を `YAHOO_FINANCE_INDEX` に統合、`UNAVAILABLE = 0` 達成）。
+2. **P2-INDEX-REFRESH** — Yahoo 指数 refresh/cache 戦略の見直し（24h→15分? / 7d bars の妥当性）。P2-INDEX-SX5E 実装時に分離。
+3. **P2-HOLIDAY** — 営業日・祝日判定精度向上。主要市場の軽量祝日カレンダー（固定リスト or keyless API）を `MARKETS` セッション状態へ反映。FX/暗号/先物の「前営業日」選択精度向上。
+4. **P2-PROVENANCE-UI** — カード表面での出所・基準時刻の一覧性向上。現在は詳細ドロワー内のみ provenance を表示。一覧・カードでも軽量に表示。
+5. **P2-ALERT** — STALE / UNAVAILABLE 発生時の Discord アラート。P2-VER2 で `verify-provider.mjs` の死コード化を指摘済み。健全性スナップショット出力と組み合わせて通知。
+6. **P2-YEN-EXPAND** — ACWI 円換算参考（P1-YEN）の米国株19銘柄への展開。P1-YEN で温存した拡張案。期間一致ゲート・provenance 設計を流用。
+7. **P2-ACCEPTANCE** — 「16/16 受入セット」の機械判定化。`ACCEPTANCE_IDS`（16銘柄）をコード化し、ヘルス/受入エンドポイントで受入ラインを機械的に返す。16/16 は引き続きユーザー側受入確認セット（アプリ内定数なし）の定義を維持。実装は行わず、将来の自動化案として保持。
 
 ---
 

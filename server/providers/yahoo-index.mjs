@@ -19,6 +19,7 @@ const INDEX_SYMBOL = Object.freeze({
   HSI: '^HSI',    // Hang Seng
   ASX: '^AXJO',   // S&P/ASX 200
   SSE: '000001.SS', // SSE Composite (^SSE is NOT the composite; use 000001.SS)
+  SX5E: '^STOXX50E', // Euro Stoxx 50 (Yahoo index; ^SX5E/STOXX50E.F are not the index)
 });
 
 function number(value) {
