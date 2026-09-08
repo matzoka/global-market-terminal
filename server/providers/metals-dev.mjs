@@ -14,11 +14,10 @@ function asIso(value) {
 export function createMetalsDevProvider(apiKey) {
   return {
     id: 'METALS_DEV_SPOT',
-    // The provider's upstream is fast, but its free tier is only 100 requests/month.
-    // refreshQuotes() consults a KV-shared last-fetch timestamp (see market-service.mjs)
-    // so every Worker isolate counts the SAME cooldown — one batch (~4 metals) per
-    // 8h window = ~90 requests/month, safely under the 100/month free-tier limit.
-    minimumRefreshMs: 8 * 60 * 60 * 1000,
+    // Spot quotes are acquired ONLY by the Cron path (refreshMetalsSpot) with a
+    // 12h KV cooldown, NOT by the dashboard/manual-refresh loop. minimumRefreshMs
+    // here is informational; the binding cooldown lives in market-service.mjs.
+    minimumRefreshMs: 12 * 60 * 60 * 1000,
     supports(instrument) { return instrument.kind === 'metal' && Boolean(METALS[instrument.id]); },
     // Metal daily bars are sourced from Yahoo Finance futures via the dedicated
     // YAHOO_FINANCE_METAL_FUTURES provider, so this spot provider must NOT claim

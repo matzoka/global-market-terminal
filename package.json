@@ -8,7 +8,7 @@
     "start": "wrangler dev",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test",
+    "test": "node --import ./test/setup-env.mjs --test",
     "verify:provider": "node scripts/verify-provider.mjs"
   },
   "engines": {

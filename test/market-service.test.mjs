@@ -51,7 +51,7 @@ test('free Metals.Dev adapter covers all four cards and is quota limited', async
   const { createMetalsDevProvider } = await import('../server/providers/metals-dev.mjs');
   const provider = createMetalsDevProvider('unused-for-this-test');
   ['XAU', 'XAG', 'XPT', 'XPD'].forEach((id) => assert.equal(provider.supports(byId.get(id)), true));
-  assert.equal(provider.minimumRefreshMs, 8 * 60 * 60 * 1000);
+  assert.equal(provider.minimumRefreshMs, 12 * 60 * 60 * 1000);
 });
 
 test('production browser code contains no vendor endpoint or random price generator', async () => {

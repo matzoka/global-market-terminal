@@ -43,7 +43,7 @@ test('scheduled handler isolates alert errors (does not propagate)', async () =>
 
 test('health() exposes unavailableCount / staleCount / degraded', async () => {
   const { health } = await import('../server/market-service.mjs');
-  const h = health();
+  const h = await health();
   assert.equal(typeof h.unavailableCount, 'number');
   assert.equal(typeof h.staleCount, 'number');
   assert.equal(typeof h.degraded, 'boolean');

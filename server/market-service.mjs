@@ -15,11 +15,12 @@ let bars = new Map();
 let lastRefreshAt = 0;
 const barRequests = new Map();
 const barCacheMs = 15 * 60 * 1000;
-// Shared quota gate for Metals.Dev (100 req/month free tier). Stored in KV so
-// every Worker isolate reads the SAME last-fetch timestamp instead of each
-// instance burning its own quota budget (which exceeded the monthly limit).
 let metalsKv = null;
-const METALS_LAST_FETCH_KEY = 'metals_dev_spot_last_fetch';
+const METALS_SPOT_KEY = 'metals_dev_spot';
+// Metals.Dev Free tier = 100 requests/month. Acquisition is Cron-only with a
+// 12h cooldown so the WHOLE account (all isolates) burns at most ~62 req/month,
+// leaving generous headroom. Dashboard/manual refresh NEVER call the upstream API.
+const METALS_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 const primaryProvider = !primaryProviderReady() ? null
   : config.provider === 'alpaca' ? createAlpacaProvider(config.alpacaApiKeyId, config.alpacaApiSecretKey)
@@ -34,12 +35,16 @@ const providers = [
   // coverage instead of consuming the FX quota in one oversized batch.
   config.provider !== 'twelvedata' && config.twelveDataApiKey ? createTwelveDataProvider(config.twelveDataApiKey, { fxOnly: true }) : null,
   config.eodhdApiToken ? createEodhdProvider(config.eodhdApiToken) : null,
-  config.metalsDevApiKey ? createMetalsDevProvider(config.metalsDevApiKey) : null,
   createFrankfurterProvider(),
   createYahooFtseProvider(),
   createYahooMetalFuturesProvider(),
   createYahooIndexProvider(),
 ].filter(Boolean);
+// Metals.Dev spot is acquired ONLY via refreshMetalsSpot() on the Cron path and
+// served from KV on the dashboard path. It is intentionally excluded from the
+// live refreshQuotes() provider loop so dashboard traffic cannot consume quota.
+const metalsDevProvider = config.metalsDevApiKey ? createMetalsDevProvider(config.metalsDevApiKey) : null;
+const metalInstruments = () => (metalsDevProvider ? instruments.filter((item) => metalsDevProvider.supports(item)) : []);
 
 function now() { return new Date().toISOString(); }
 function qualityFor(id) {
@@ -56,7 +61,7 @@ function barsProviderFor(instrument) {
   }) || null;
 }
 function unavailable(instrument, reason) {
-  const source = providerFor(instrument);
+  const source = providerFor(instrument) || (metalsDevProvider && metalsDevProvider.supports(instrument) ? metalsDevProvider : null);
   return {
     instrumentId: instrument.id, status: 'UNAVAILABLE', provider: source?.id || 'COVERAGE_PENDING',
     providerSymbol: instrument.providerSymbol, deliveryLabel: 'NO APPROVED FREE SOURCE', asOf: null, receivedAt: now(), reason,
@@ -73,19 +78,51 @@ function providerLastSuccess(provider) {
     return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
   }, 0);
 }
-// Read the shared Metals.Dev last-fetch timestamp from KV (instance-independent).
-async function metalsLastFetch() {
-  if (!metalsKv) return 0;
+// Read the cached Metals.Dev spot snapshot from KV (dashboard path — no upstream call).
+async function loadMetalsSpotCache() {
+  if (!metalsKv) return null;
   try {
-    const raw = await metalsKv.get(METALS_LAST_FETCH_KEY);
-    const ts = raw ? Number.parseInt(raw, 10) : 0;
-    return Number.isFinite(ts) ? ts : 0;
-  } catch { return 0; }
+    const raw = await metalsKv.get(METALS_SPOT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
-// Persist the shared Metals.Dev last-fetch timestamp to KV after a successful batch.
-async function metalsMarkFetched() {
+// Persist the latest Metals.Dev spot snapshot (success OR failure) to KV.
+async function saveMetalsSpotCache(record) {
   if (!metalsKv) return;
-  try { await metalsKv.put(METALS_LAST_FETCH_KEY, String(Date.now())); } catch { /* best-effort */ }
+  try { await metalsKv.put(METALS_SPOT_KEY, JSON.stringify(record)); } catch { /* best-effort */ }
+}
+
+// Cron-only Metals.Dev spot acquisition. Respects a 12h cooldown read from KV so
+// every Worker isolate shares the SAME last-attempt gate (no retry storm while
+// quota is exhausted). Saves success quotes + fetchedAt, and on failure the
+// attemptedAt + reason, so dashboard reads a stable cached state either way.
+export async function refreshMetalsSpot(kv = null) {
+  if (kv) metalsKv = kv;
+  if (!metalsDevProvider) return null;
+  const cache = await loadMetalsSpotCache();
+  if (cache?.attemptedAt && Date.now() - Date.parse(cache.attemptedAt) < METALS_COOLDOWN_MS) {
+    return cache; // cooldown not elapsed — do not call upstream, suppress retries
+  }
+  const eligible = metalInstruments();
+  const receivedAt = now();
+  try {
+    const quotes = await metalsDevProvider.getQuotes(eligible);
+    const quotesMap = new Map();
+    eligible.forEach((item) => {
+      const quote = quotes.get(item.id);
+      if (quote) quotesMap.set(item.id, { ...quote, status: displayStatus(item, quote), provider: metalsDevProvider.id, receivedAt, fetchedAt: receivedAt, delaySeconds: null });
+    });
+    const record = { attemptedAt: receivedAt, status: 'OK', quotes: Object.fromEntries(quotesMap) };
+    await saveMetalsSpotCache(record);
+    return record;
+  } catch (error) {
+    // Persist the failure (with reason) and the cooldown so we do NOT retry hard
+    // while quota is exhausted (error 1203) — protects the remaining monthly budget.
+    const record = { attemptedAt: receivedAt, status: 'FAILED', reason: error.message };
+    await saveMetalsSpotCache(record);
+    console.error(JSON.stringify({ event: 'metals_spot_refresh_failed', at: receivedAt, message: error.message }));
+    return record;
+  }
 }
 function providerDue(provider, force) {
   const minRefresh = provider.minimumRefreshMs || config.quoteCacheSeconds * 1000;
@@ -105,18 +142,7 @@ async function refreshQuotes(force = false) {
   lastRefreshAt = Date.now();
   let attempted = false;
   for (const provider of providers) {
-    // Metals.Dev free tier (100 req/month) is shared across all Worker isolates
-    // via KV, so its refresh gate must consult the SHARED last-fetch timestamp
-    // rather than this isolate's in-memory snapshot alone.
-    let due = true;
-    if (provider.id === 'METALS_DEV_SPOT') {
-      const sharedLast = await metalsLastFetch();
-      const minRefresh = provider.minimumRefreshMs || config.quoteCacheSeconds * 1000;
-      due = !sharedLast || Date.now() - sharedLast >= minRefresh;
-    } else {
-      due = providerDue(provider, force);
-    }
-    if (!due) continue;
+    if (!providerDue(provider, force)) continue;
     attempted = true;
     const eligible = instruments.filter((item) => provider.supports(item));
     const receivedAt = now();
@@ -130,7 +156,6 @@ async function refreshQuotes(force = false) {
           delaySeconds: quote.status === 'PARTIAL_REALTIME' ? 0 : null,
         });
       });
-      if (provider.id === 'METALS_DEV_SPOT') await metalsMarkFetched();
     } catch (error) {
       eligible.forEach((item) => retainOrMarkUnavailable(item, 'provider_request_failed', receivedAt));
       console.error(JSON.stringify({ event: 'quote_refresh_failed', provider: provider.id, at: receivedAt, message: error.message }));
@@ -142,8 +167,16 @@ async function refreshQuotes(force = false) {
 export async function refreshAndInspect(kv = null) {
   if (kv) metalsKv = kv;
   await refreshQuotes(false);
+  // Surface the Cron-acquired Metals.Dev spot snapshot (from KV) for alert evaluation.
+  const metalsCache = await loadMetalsSpotCache();
   const rows = instruments.map((item) => {
-    const quote = snapshots.get(item.id) || unavailable(item, 'not_loaded');
+    let quote = snapshots.get(item.id);
+    if (!quote && metalsDevProvider?.supports(item) && metalsCache) {
+      quote = metalsCache.status === 'OK'
+        ? (metalsCache.quotes?.[item.id] || unavailable(item, 'metals_spot_cache_empty'))
+        : unavailable(item, metalsCache.reason || 'metals_spot_unavailable');
+    }
+    quote = quote || unavailable(item, 'not_loaded');
     return {
       id: item.id,
       status: quote.status || 'UNKNOWN',
@@ -157,10 +190,23 @@ export async function refreshAndInspect(kv = null) {
 export async function dashboard(force = false, kv = null) {
   if (kv) metalsKv = kv;
   await refreshQuotes(force);
+  // Metals.Dev spot is served from the Cron-written KV cache; dashboard traffic
+  // NEVER triggers an upstream call (quota guard). Successful cache -> quotes;
+  // failed/expired cache -> UNAVAILABLE with the stored reason.
+  const metalsCache = await loadMetalsSpotCache();
+  const instrumentsOut = instruments.map((item) => {
+    if (metalsDevProvider?.supports(item) && metalsCache) {
+      if (metalsCache.status === 'OK') {
+        return { ...item, quote: metalsCache.quotes?.[item.id] || unavailable(item, 'metals_spot_cache_empty') };
+      }
+      return { ...item, quote: unavailable(item, metalsCache.reason || 'metals_spot_unavailable') };
+    }
+    return { ...item, quote: snapshots.get(item.id) || unavailable(item, 'not_loaded') };
+  });
   return {
     generatedAt: now(), provider: providers.map((provider) => provider.id).join(',') || 'NOT_CONFIGURED',
     quoteCacheSeconds: config.quoteCacheSeconds,
-    instruments: instruments.map((item) => ({ ...item, quote: snapshots.get(item.id) || unavailable(item, 'not_loaded') })),
+    instruments: instrumentsOut,
     groups: { indices: indexIds, sectors: sectorIds, metals: metalIds, research: researchIds, chart: 'ACWI' },
   };
 }
@@ -192,11 +238,15 @@ export async function dailyBars(id, outputSize = 60) {
   return request;
 }
 
-export function health() {
+export async function health(kv = null) {
+  if (kv) metalsKv = kv;
   const sourceList = providers.map((provider) => provider.id);
   let unavailableCount = 0;
   let staleCount = 0;
   for (const item of instruments) {
+    // Metals.Dev spot lives in KV (Cron-written) and is checked separately below,
+    // independent of whether the provider object is currently configured.
+    if (item.kind === 'metal') continue;
     const quote = snapshots.get(item.id);
     // Only count instruments we have actually evaluated. Instruments whose
     // quote has not been fetched yet (cold/separate instance) are unknown,
@@ -204,6 +254,21 @@ export function health() {
     if (!quote) continue;
     if (quote.status === 'UNAVAILABLE') unavailableCount++;
     else if (quote.status === 'STALE') staleCount++;
+  }
+  // Account for Metals.Dev spot via its KV cache (no upstream call here).
+  // Count metals regardless of whether the provider object is currently wired,
+  // as long as the instrument registry defines metal cards.
+  const metalCards = instruments.filter((item) => item.kind === 'metal');
+  if (metalCards.length) {
+    const cache = await loadMetalsSpotCache();
+    for (const item of metalCards) {
+      if (!cache) { unavailableCount++; continue; }
+      if (cache.status === 'OK') {
+        if (!cache.quotes?.[item.id]) unavailableCount++;
+      } else {
+        unavailableCount++; // FAILED / quota-exhausted -> unavailable
+      }
+    }
   }
   return {
     status: sourceList.length ? 'ready' : 'configuration_required', provider: sourceList.join(',') || 'NOT_CONFIGURED',

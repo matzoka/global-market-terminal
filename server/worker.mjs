@@ -8,7 +8,7 @@
 // The original Node-specific pieces (http.createServer / listen, file-based
 // cache.json, IP allow-listing) were removed during the Cloudflare migration.
 
-import { dashboard, dailyBars, health, refreshAndInspect } from './market-service.mjs';
+import { dashboard, dailyBars, health, refreshAndInspect, refreshMetalsSpot } from './market-service.mjs';
 import { evaluateAlerts } from './alert-service.mjs';
 
 const contentTypes = {
@@ -42,7 +42,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname === '/api/v1/health') {
-        return jsonResponse(200, health());
+        return jsonResponse(200, await health());
       }
       if (url.pathname === '/api/v1/dashboard') {
         return jsonResponse(200, await dashboard(url.searchParams.get('refresh') === '1', env.GMT_ALERT_STATE));
@@ -72,6 +72,8 @@ export default {
     // provider's minimumRefreshMs, then evaluates alert state. Failures here must
     // NEVER break the fetch/dashboard API.
     try {
+      // Cron-only Metals.Dev spot acquisition (quota-guarded, 12h cooldown in KV).
+      await refreshMetalsSpot(env.GMT_ALERT_STATE);
       const rows = await refreshAndInspect(env.GMT_ALERT_STATE);
       const result = await evaluateAlerts(rows, env, ctx);
       console.log(JSON.stringify({ event: 'alert_evaluation', ...result }));
