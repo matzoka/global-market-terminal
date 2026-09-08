@@ -167,3 +167,140 @@ test('metals spot is excluded from live refreshQuotes provider loop', async () =
     assert.equal(xau.quote.status, 'UNAVAILABLE');
   } finally { restore(); }
 });
+
+// Regression: refreshQuotes() must NOT overwrite metals with
+// not_covered_by_configured_sources, and refreshAndInspect() must prefer the KV
+// cache over any synthetic metal snapshot so P2-ALERT recovers when quota resets.
+function fakeKvWithList(initial = {}) {
+  const store = { ...initial };
+  return {
+    async get(k, opts) {
+      if (!Object.prototype.hasOwnProperty.call(store, k)) return null;
+      const raw = store[k];
+      if (opts && opts.type === 'json') { try { return JSON.parse(raw); } catch { return null; } }
+      return raw;
+    },
+    async put(k, v) { store[k] = v; },
+    async list() { return { keys: Object.keys(store).map((name) => ({ name })) }; },
+    _store: store,
+  };
+}
+
+const okRecord = {
+  attemptedAt: '2026-09-08T12:00:00.000Z',
+  status: 'OK',
+  quotes: {
+    XAU: { instrumentId: 'XAU', price: 2500.1, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+    XAG: { instrumentId: 'XAG', price: 29.5, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+    XPT: { instrumentId: 'XPT', price: 980.2, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+    XPD: { instrumentId: 'XPD', price: 1200.3, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+  },
+};
+
+test('refreshAndInspect prefers KV OK cache; metals never not_covered_by_configured_sources', async () => {
+  process.env.METALS_DEV_API_KEY = 'test-key';
+  const kv = fakeKvWithList({ metals_dev_spot: JSON.stringify(okRecord) });
+  let metalsCalls = 0;
+  const restore = stubMetalsFetch(async (url) => { if (String(url).startsWith(METALS_LATEST)) metalsCalls++; return metalsSuccessResponse(); });
+  try {
+    const { refreshAndInspect } = await import('../server/market-service.mjs');
+    const rows = await refreshAndInspect(kv);
+    assert.equal(metalsCalls, 0, 'refreshAndInspect must not call upstream');
+    for (const id of ['XAU', 'XAG', 'XPT', 'XPD']) {
+      const r = rows.find((x) => x.id === id);
+      assert.equal(r.status, 'DELAYED', `${id} must reflect KV OK cache, not UNAVAILABLE`);
+      assert.notEqual(r.reason, 'not_covered_by_configured_sources', `${id} must not be not_covered`);
+    }
+  } finally { restore(); }
+});
+
+test('pre-existing synthetic metal snapshot does NOT override KV OK cache', async () => {
+  process.env.METALS_DEV_API_KEY = 'test-key';
+  const kv = fakeKvWithList({ metals_dev_spot: JSON.stringify(okRecord) });
+  // refreshQuotes runs (metals excluded from its provider loop) but refreshAndInspect
+  // must still prefer the KV OK cache for metals, never a snapshot it may leave.
+  const restore = stubMetalsFetch(async () => metalsSuccessResponse());
+  try {
+    const { refreshAndInspect } = await import('../server/market-service.mjs');
+    const rows = await refreshAndInspect(kv);
+    for (const id of ['XAU', 'XAG', 'XPT', 'XPD']) {
+      assert.equal(rows.find((x) => x.id === id).status, 'DELAYED', `${id} KV OK wins over any snapshot`);
+    }
+  } finally { restore(); }
+});
+
+test('refreshAndInspect reports 4 metals UNAVAILABLE when KV status=FAILED', async () => {
+  process.env.METALS_DEV_API_KEY = 'test-key';
+  const failedRecord = { attemptedAt: '2026-09-08T12:00:00.000Z', status: 'FAILED', reason: 'provider_http_400' };
+  const kv = fakeKvWithList({ metals_dev_spot: JSON.stringify(failedRecord) });
+  const restore = stubMetalsFetch(async () => metalsSuccessResponse());
+  try {
+    const { refreshAndInspect } = await import('../server/market-service.mjs');
+    const rows = await refreshAndInspect(kv);
+    for (const id of ['XAU', 'XAG', 'XPT', 'XPD']) {
+      const r = rows.find((x) => x.id === id);
+      assert.equal(r.status, 'UNAVAILABLE', `${id} FAILED cache -> UNAVAILABLE`);
+      assert.equal(r.reason, 'provider_http_400');
+    }
+  } finally { restore(); }
+});
+
+test('scheduled path recovers metals when KV OK (RECOVERED state possible)', async () => {
+  process.env.METALS_DEV_API_KEY = 'test-key';
+  // Seed KV with a prior CRITICAL incident so we can verify recovery transition.
+  // Note: evaluateAlerts keys incidents as `provider|reason` (severity is stored
+  // inside the record, not in the key), so the seed key matches that form.
+  const priorIncident = {
+    status: 'UNAVAILABLE', reason: 'provider_http_400', consecutiveFailures: 3,
+    firstDetectedAt: '2026-09-01T00:00:00.000Z', lastDetectedAt: '2026-09-08T00:00:00.000Z',
+    lastAlertAt: '2026-09-08T00:00:00.000Z', severity: 'CRITICAL',
+    affected: ['XAU', 'XAG', 'XPT', 'XPD'], alerted: true, recoveryNotified: false,
+  };
+  const kv = fakeKvWithList({
+    'METALS_DEV_SPOT|provider_http_400': JSON.stringify(priorIncident),
+    metals_dev_spot: JSON.stringify(okRecord),
+  });
+  const restore = stubMetalsFetch(async () => metalsSuccessResponse());
+  try {
+    const { refreshMetalsSpot, refreshAndInspect } = await import('../server/market-service.mjs');
+    const { evaluateAlerts } = await import('../server/alert-service.mjs');
+    // Cron path: refreshMetalsSpot (writes OK), then inspect, then evaluate.
+    await refreshMetalsSpot(kv);
+    const rows = await refreshAndInspect(kv);
+    const result = await evaluateAlerts(rows, { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: null }, {});
+    // No abnormal metal rows -> the prior incident is recovered (state transition).
+    assert.equal(result.alertsSent, 0, 'no new CRITICAL when KV OK');
+    // Stored incident must be marked RECOVERED (recovered count needs a webhook;
+    // the state transition itself is the guarantee we assert here).
+    const stored = JSON.parse(kv._store['METALS_DEV_SPOT|provider_http_400']);
+    assert.equal(stored.status, 'RECOVERED', 'prior incident transitions to RECOVERED on KV OK');
+    assert.equal(stored.recoveryNotified, true);
+  } finally { restore(); }
+});
+
+test('scheduled path keeps CRITICAL when KV FAILED (no false recovery)', async () => {
+  process.env.METALS_DEV_API_KEY = 'test-key';
+  const priorIncident = {
+    status: 'UNAVAILABLE', reason: 'provider_http_400', consecutiveFailures: 3,
+    firstDetectedAt: '2026-09-01T00:00:00.000Z', lastDetectedAt: '2026-09-08T00:00:00.000Z',
+    lastAlertAt: '2026-09-08T00:00:00.000Z', severity: 'CRITICAL',
+    affected: ['XAU', 'XAG', 'XPT', 'XPD'], alerted: true, recoveryNotified: false,
+  };
+  const failedRecord = { attemptedAt: '2026-09-08T12:00:00.000Z', status: 'FAILED', reason: 'provider_http_400' };
+  const kv = fakeKvWithList({
+    'METALS_DEV_SPOT|provider_http_400': JSON.stringify(priorIncident),
+    metals_dev_spot: JSON.stringify(failedRecord),
+  });
+  const restore = stubMetalsFetch(async () => metalsSuccessResponse());
+  try {
+    const { refreshMetalsSpot, refreshAndInspect } = await import('../server/market-service.mjs');
+    const { evaluateAlerts } = await import('../server/alert-service.mjs');
+    await refreshMetalsSpot(kv);
+    const rows = await refreshAndInspect(kv);
+    const result = await evaluateAlerts(rows, { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: null }, {});
+    // Metals still UNAVAILABLE -> incident stays active (no recovery).
+    assert.equal(result.recovered, 0, 'FAILED cache must NOT recover the incident');
+    const stored = JSON.parse(kv._store['METALS_DEV_SPOT|provider_http_400']);
+    assert.equal(stored.status, 'UNAVAILABLE', 'incident remains UNAVAILABLE on FAILED cache');
+  } finally { restore(); }
+});

@@ -188,6 +188,10 @@ export async function evaluateAlerts(rows, env = {}, ctx = {}) {
 
   // Recovery: stored incidents no longer present in the current abnormal groups.
   for (const groupKey of storedKeys) {
+    // Skip the Metals.Dev spot cache key (METALS_DEV_SPOT), which is NOT an
+    // incident record — it is the Cron-written quote cache and must never be
+    // treated as a recoverable incident.
+    if (groupKey === 'metals_dev_spot') continue;
     if (activeGroupKeys.has(groupKey)) continue;
     const stored = await safeGet(kv, groupKey);
     if (!stored || stored.recoveryNotified || !stored.alerted) continue;

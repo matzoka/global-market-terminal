@@ -162,22 +162,27 @@ async function refreshQuotes(force = false) {
       console.error(JSON.stringify({ event: 'quote_refresh_failed', provider: provider.id, at: receivedAt, message: error.message }));
     }
   }
-  instruments.filter((item) => !providerFor(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));
+  instruments.filter((item) => !providerFor(item) && !metalsDevProvider?.supports(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));
 }
 
 export async function refreshAndInspect(kv = null) {
   if (kv) metalsKv = kv;
   await refreshQuotes(false);
   // Surface the Cron-acquired Metals.Dev spot snapshot (from KV) for alert evaluation.
+  // Metals.Dev is Cron/KV-managed and intentionally excluded from the live
+  // refreshQuotes() provider loop, so its state MUST come from the KV cache only —
+  // never from a synthetic not_covered snapshot left by refreshQuotes().
   const metalsCache = await loadMetalsSpotCache();
   const rows = instruments.map((item) => {
-    let quote = snapshots.get(item.id);
-    if (!quote && metalsDevProvider?.supports(item) && metalsCache) {
-      quote = metalsCache.status === 'OK'
+    let quote;
+    if (metalsDevProvider?.supports(item)) {
+      // KV cache takes precedence for metals; ignore any snapshot left by refreshQuotes.
+      quote = metalsCache?.status === 'OK'
         ? (metalsCache.quotes?.[item.id] || unavailable(item, 'metals_spot_cache_empty'))
-        : unavailable(item, metalsCache.reason || 'metals_spot_unavailable');
+        : unavailable(item, metalsCache?.reason || 'metals_spot_unavailable');
+    } else {
+      quote = snapshots.get(item.id) || unavailable(item, 'not_loaded');
     }
-    quote = quote || unavailable(item, 'not_loaded');
     return {
       id: item.id,
       status: quote.status || 'UNKNOWN',
