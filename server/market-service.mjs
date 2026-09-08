@@ -165,7 +165,10 @@ export function health() {
   let staleCount = 0;
   for (const item of instruments) {
     const quote = snapshots.get(item.id);
-    if (!quote) { unavailableCount++; continue; }
+    // Only count instruments we have actually evaluated. Instruments whose
+    // quote has not been fetched yet (cold/separate instance) are unknown,
+    // not unavailable — counting them would over-report incidents.
+    if (!quote) continue;
     if (quote.status === 'UNAVAILABLE') unavailableCount++;
     else if (quote.status === 'STALE') staleCount++;
   }
