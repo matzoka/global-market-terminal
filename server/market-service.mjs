@@ -18,8 +18,9 @@ const barCacheMs = 15 * 60 * 1000;
 let metalsKv = null;
 const METALS_SPOT_KEY = 'metals_dev_spot';
 // Metals.Dev Free tier = 100 requests/month. Acquisition is Cron-only with a
-// 12h cooldown so the WHOLE account (all isolates) burns at most ~62 req/month,
-// leaving generous headroom. Dashboard/manual refresh NEVER call the upstream API.
+// 12h cooldown so the WHOLE account (all isolates) targets ~60-62 req/month,
+// leaving generous headroom. NOTE: Workers KV is eventually consistent and is NOT
+// a strict distributed lock, so this is a target, not a hard guarantee.
 const METALS_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 const primaryProvider = !primaryProviderReady() ? null

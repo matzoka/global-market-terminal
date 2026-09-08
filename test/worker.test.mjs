@@ -52,3 +52,53 @@ test('health() exposes unavailableCount / staleCount / degraded', async () => {
   assert.ok('provider' in h);
   assert.ok('quoteCacheSeconds' in h);
 });
+
+// Regression: /api/v1/health must pass env.GMT_ALERT_STATE to health() so a cold
+// Worker isolate reads Metals.Dev state from KV instead of counting metals as
+// UNAVAILABLE. Validates the real request path end-to-end.
+function fakeKv(initial = {}) {
+  const store = { ...initial };
+  return {
+    async get(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+    async put(k, v) { store[k] = v; },
+    _store: store,
+  };
+}
+
+test('/api/v1/health passes GMT_ALERT_STATE KV and reads metals from it (cold isolate)', async () => {
+  process.env.METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY || 'test-key';
+  let metalsCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith('https://api.metals.dev/v1/latest')) metalsCalls++;
+    return new Response(JSON.stringify({ chart: { result: [{ meta: { symbol: 'x', instrumentType: 'INDEX', regularMarketPrice: 1, regularMarketTime: 1788536130 }, timestamp: [1787727600], indicators: { quote: [{ close: [1] }] } }], error: null } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const { default: worker } = await import('../server/worker.mjs');
+    const okQuotes = {
+      XAU: { instrumentId: 'XAU', price: 2500.1, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+      XAG: { instrumentId: 'XAG', price: 29.5, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+      XPT: { instrumentId: 'XPT', price: 980.2, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+      XPD: { instrumentId: 'XPD', price: 1200.3, currency: 'USD', status: 'DELAYED', provider: 'METALS_DEV_SPOT', asOf: '2026-09-08T12:00:00.000Z', receivedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', reason: null },
+    };
+    // OK cache: 4 metals present -> should NOT add to unavailableCount vs FAILED.
+    const okRecord = { attemptedAt: '2026-09-08T12:00:00.000Z', status: 'OK', quotes: okQuotes };
+    const kvOk = fakeKv({ metals_dev_spot: JSON.stringify(okRecord) });
+    const resOk = await worker.fetch(new Request('https://x/api/v1/health'), { GMT_ALERT_STATE: kvOk }, {});
+    const bodyOk = await resOk.json();
+    assert.equal(metalsCalls, 0, 'health path must not call Metals.Dev upstream');
+
+    // FAILED cache: 4 metals unavailable -> must add exactly 4 vs OK cache.
+    const failedRecord = { attemptedAt: '2026-09-08T12:00:00.000Z', status: 'FAILED', reason: 'provider_http_400' };
+    const kvFail = fakeKv({ metals_dev_spot: JSON.stringify(failedRecord) });
+    const resFail = await worker.fetch(new Request('https://x/api/v1/health'), { GMT_ALERT_STATE: kvFail }, {});
+    const bodyFail = await resFail.json();
+    assert.equal(metalsCalls, 0, 'health path still must not call upstream on FAILED cache');
+    // Delta between FAILED and OK cache must be exactly the 4 metals (any other
+    // instruments' state is identical in both runs, so it cancels out).
+    assert.equal(bodyFail.unavailableCount - bodyOk.unavailableCount, 4, 'FAILED cache adds exactly 4 metals unavailable vs OK cache');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

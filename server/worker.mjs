@@ -42,7 +42,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname === '/api/v1/health') {
-        return jsonResponse(200, await health());
+        return jsonResponse(200, await health(env.GMT_ALERT_STATE));
       }
       if (url.pathname === '/api/v1/dashboard') {
         return jsonResponse(200, await dashboard(url.searchParams.get('refresh') === '1', env.GMT_ALERT_STATE));
