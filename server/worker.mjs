@@ -8,7 +8,8 @@
 // The original Node-specific pieces (http.createServer / listen, file-based
 // cache.json, IP allow-listing) were removed during the Cloudflare migration.
 
-import { dashboard, dailyBars, health } from './market-service.mjs';
+import { dashboard, dailyBars, health, refreshAndInspect } from './market-service.mjs';
+import { evaluateAlerts } from './alert-service.mjs';
 
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -63,6 +64,19 @@ export default {
     } catch (error) {
       console.error(JSON.stringify({ event: 'request_failed', path: url.pathname, message: error.message }));
       return jsonResponse(500, { error: 'internal_error' });
+    }
+  },
+
+  async scheduled(controller, env, ctx) {
+    // Cron monitor (Phase A: every 30 min). Runs quote refresh respecting each
+    // provider's minimumRefreshMs, then evaluates alert state. Failures here must
+    // NEVER break the fetch/dashboard API.
+    try {
+      const rows = await refreshAndInspect();
+      const result = await evaluateAlerts(rows, env, ctx);
+      console.log(JSON.stringify({ event: 'alert_evaluation', ...result }));
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'alert_evaluation_failed', message: error.message }));
     }
   },
 };

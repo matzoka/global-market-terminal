@@ -54,16 +54,23 @@ test('FX insufficient bars yields no derived change', () => {
   assert.equal(derivePreviousClose(item, [{ time: '2026-09-04', close: 156.25 }]), null);
 });
 
+// Crypto bars anchored to the real UTC day so the "exclude current UTC-day"
+// rule stays meaningful regardless of when the suite runs.
+const utcDay = (offset) => {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - offset);
+  return d.toISOString().slice(0, 10);
+};
 const cryptoBars = [
-  { time: '2026-09-04', close: 12449941 },
-  { time: '2026-09-05', close: 12500018 },
-  { time: '2026-09-06', close: 12498838 },
-  { time: '2026-09-07', close: 12600000 }, // current UTC-day (unconfirmed, excluded)
+  { time: utcDay(3), close: 12449941 },
+  { time: utcDay(2), close: 12500018 },
+  { time: utcDay(1), close: 12498838 },
+  { time: utcDay(0), close: 12600000 }, // current UTC-day (unconfirmed, excluded)
 ];
 
 test('Crypto excludes current UTC-day (unconfirmed) bar', () => {
   const item = { price: 12600000, researchGroup: 'crypto' };
-  // today (UTC) is 2026-09-07, so 09-07 bar is excluded; prior confirmed = 09-06
+  // current UTC-day bar is excluded; prior confirmed = yesterday
   const prev = derivePreviousClose(item, cryptoBars);
   assert.equal(prev, 12498838);
 });

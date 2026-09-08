@@ -11,5 +11,14 @@
   },
   "observability": {
     "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "GMT_ALERT_STATE",
+      "id": "c501084932974993902fa9afc6821488"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/30 * * * *"]
   }
 }

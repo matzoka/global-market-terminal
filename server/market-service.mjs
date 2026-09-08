@@ -108,6 +108,20 @@ async function refreshQuotes(force = false) {
   instruments.filter((item) => !providerFor(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));
 }
 
+export async function refreshAndInspect() {
+  await refreshQuotes(false);
+  const rows = instruments.map((item) => {
+    const quote = snapshots.get(item.id) || unavailable(item, 'not_loaded');
+    return {
+      id: item.id,
+      status: quote.status || 'UNKNOWN',
+      reason: quote.reason || null,
+      provider: quote.provider || null,
+    };
+  });
+  return rows;
+}
+
 export async function dashboard(force = false) {
   await refreshQuotes(force);
   return {
@@ -147,9 +161,19 @@ export async function dailyBars(id, outputSize = 60) {
 
 export function health() {
   const sourceList = providers.map((provider) => provider.id);
+  let unavailableCount = 0;
+  let staleCount = 0;
+  for (const item of instruments) {
+    const quote = snapshots.get(item.id);
+    if (!quote) { unavailableCount++; continue; }
+    if (quote.status === 'UNAVAILABLE') unavailableCount++;
+    else if (quote.status === 'STALE') staleCount++;
+  }
   return {
     status: sourceList.length ? 'ready' : 'configuration_required', provider: sourceList.join(',') || 'NOT_CONFIGURED',
     providerConfigured: sourceList.length > 0, quoteCacheSeconds: config.quoteCacheSeconds,
+    instrumentCount: instruments.length, unavailableCount, staleCount,
+    degraded: unavailableCount > 0 || staleCount > 0,
     freeCoverage: 'World reference: ACWI ETF / EOD indices; FX: Twelve Data quote + ECB daily reference; crypto: CoinGecko aggregated reference; metals: quota-cached spot reference',
   };
 }
