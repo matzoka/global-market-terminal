@@ -45,7 +45,7 @@ export default {
         return jsonResponse(200, health());
       }
       if (url.pathname === '/api/v1/dashboard') {
-        return jsonResponse(200, await dashboard(url.searchParams.get('refresh') === '1'));
+        return jsonResponse(200, await dashboard(url.searchParams.get('refresh') === '1', env.GMT_ALERT_STATE));
       }
       const match = url.pathname.match(/^\/api\/v1\/instruments\/([A-Z0-9_]+)\/bars$/);
       if (match) {
@@ -72,7 +72,7 @@ export default {
     // provider's minimumRefreshMs, then evaluates alert state. Failures here must
     // NEVER break the fetch/dashboard API.
     try {
-      const rows = await refreshAndInspect();
+      const rows = await refreshAndInspect(env.GMT_ALERT_STATE);
       const result = await evaluateAlerts(rows, env, ctx);
       console.log(JSON.stringify({ event: 'alert_evaluation', ...result }));
     } catch (error) {

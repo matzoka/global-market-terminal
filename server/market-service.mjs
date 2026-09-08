@@ -15,6 +15,11 @@ let bars = new Map();
 let lastRefreshAt = 0;
 const barRequests = new Map();
 const barCacheMs = 15 * 60 * 1000;
+// Shared quota gate for Metals.Dev (100 req/month free tier). Stored in KV so
+// every Worker isolate reads the SAME last-fetch timestamp instead of each
+// instance burning its own quota budget (which exceeded the monthly limit).
+let metalsKv = null;
+const METALS_LAST_FETCH_KEY = 'metals_dev_spot_last_fetch';
 
 const primaryProvider = !primaryProviderReady() ? null
   : config.provider === 'alpaca' ? createAlpacaProvider(config.alpacaApiKeyId, config.alpacaApiSecretKey)
@@ -68,6 +73,20 @@ function providerLastSuccess(provider) {
     return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
   }, 0);
 }
+// Read the shared Metals.Dev last-fetch timestamp from KV (instance-independent).
+async function metalsLastFetch() {
+  if (!metalsKv) return 0;
+  try {
+    const raw = await metalsKv.get(METALS_LAST_FETCH_KEY);
+    const ts = raw ? Number.parseInt(raw, 10) : 0;
+    return Number.isFinite(ts) ? ts : 0;
+  } catch { return 0; }
+}
+// Persist the shared Metals.Dev last-fetch timestamp to KV after a successful batch.
+async function metalsMarkFetched() {
+  if (!metalsKv) return;
+  try { await metalsKv.put(METALS_LAST_FETCH_KEY, String(Date.now())); } catch { /* best-effort */ }
+}
 function providerDue(provider, force) {
   const minRefresh = provider.minimumRefreshMs || config.quoteCacheSeconds * 1000;
   const lastSuccess = providerLastSuccess(provider);
@@ -86,7 +105,18 @@ async function refreshQuotes(force = false) {
   lastRefreshAt = Date.now();
   let attempted = false;
   for (const provider of providers) {
-    if (!providerDue(provider, force)) continue;
+    // Metals.Dev free tier (100 req/month) is shared across all Worker isolates
+    // via KV, so its refresh gate must consult the SHARED last-fetch timestamp
+    // rather than this isolate's in-memory snapshot alone.
+    let due = true;
+    if (provider.id === 'METALS_DEV_SPOT') {
+      const sharedLast = await metalsLastFetch();
+      const minRefresh = provider.minimumRefreshMs || config.quoteCacheSeconds * 1000;
+      due = !sharedLast || Date.now() - sharedLast >= minRefresh;
+    } else {
+      due = providerDue(provider, force);
+    }
+    if (!due) continue;
     attempted = true;
     const eligible = instruments.filter((item) => provider.supports(item));
     const receivedAt = now();
@@ -100,6 +130,7 @@ async function refreshQuotes(force = false) {
           delaySeconds: quote.status === 'PARTIAL_REALTIME' ? 0 : null,
         });
       });
+      if (provider.id === 'METALS_DEV_SPOT') await metalsMarkFetched();
     } catch (error) {
       eligible.forEach((item) => retainOrMarkUnavailable(item, 'provider_request_failed', receivedAt));
       console.error(JSON.stringify({ event: 'quote_refresh_failed', provider: provider.id, at: receivedAt, message: error.message }));
@@ -108,7 +139,8 @@ async function refreshQuotes(force = false) {
   instruments.filter((item) => !providerFor(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));
 }
 
-export async function refreshAndInspect() {
+export async function refreshAndInspect(kv = null) {
+  if (kv) metalsKv = kv;
   await refreshQuotes(false);
   const rows = instruments.map((item) => {
     const quote = snapshots.get(item.id) || unavailable(item, 'not_loaded');
@@ -122,7 +154,8 @@ export async function refreshAndInspect() {
   return rows;
 }
 
-export async function dashboard(force = false) {
+export async function dashboard(force = false, kv = null) {
+  if (kv) metalsKv = kv;
   await refreshQuotes(force);
   return {
     generatedAt: now(), provider: providers.map((provider) => provider.id).join(',') || 'NOT_CONFIGURED',

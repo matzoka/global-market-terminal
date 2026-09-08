@@ -14,8 +14,10 @@ function asIso(value) {
 export function createMetalsDevProvider(apiKey) {
   return {
     id: 'METALS_DEV_SPOT',
-    // The provider's upstream is fast, but its free tier is 100 requests/month.
-    // One batch supplies all four cards; three batches/day stays below 100/month.
+    // The provider's upstream is fast, but its free tier is only 100 requests/month.
+    // refreshQuotes() consults a KV-shared last-fetch timestamp (see market-service.mjs)
+    // so every Worker isolate counts the SAME cooldown — one batch (~4 metals) per
+    // 8h window = ~90 requests/month, safely under the 100/month free-tier limit.
     minimumRefreshMs: 8 * 60 * 60 * 1000,
     supports(instrument) { return instrument.kind === 'metal' && Boolean(METALS[instrument.id]); },
     // Metal daily bars are sourced from Yahoo Finance futures via the dedicated
