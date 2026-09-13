@@ -121,7 +121,9 @@ export async function refreshMetalsSpot(kv = null) {
     // while quota is exhausted (error 1203) — protects the remaining monthly budget.
     const record = { attemptedAt: receivedAt, status: 'FAILED', reason: error.message };
     await saveMetalsSpotCache(record);
-    console.error(JSON.stringify({ event: 'metals_spot_refresh_failed', at: receivedAt, message: error.message }));
+    // error.detail (when the provider sets it) carries the upstream status/response
+    // body/symbols/params for diagnosis. It never includes the api_key.
+    console.error(JSON.stringify({ event: 'metals_spot_refresh_failed', at: receivedAt, message: error.message, detail: error.detail || null }));
     return record;
   }
 }
@@ -159,7 +161,7 @@ async function refreshQuotes(force = false) {
       });
     } catch (error) {
       eligible.forEach((item) => retainOrMarkUnavailable(item, 'provider_request_failed', receivedAt));
-      console.error(JSON.stringify({ event: 'quote_refresh_failed', provider: provider.id, at: receivedAt, message: error.message }));
+      console.error(JSON.stringify({ event: 'quote_refresh_failed', provider: provider.id, at: receivedAt, message: error.message, detail: error.detail || null }));
     }
   }
   instruments.filter((item) => !providerFor(item) && !metalsDevProvider?.supports(item)).forEach((item) => snapshots.set(item.id, unavailable(item, 'not_covered_by_configured_sources')));

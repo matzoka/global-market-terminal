@@ -30,7 +30,20 @@ export function createMetalsDevProvider(apiKey) {
       url.searchParams.set('currency', 'USD');
       url.searchParams.set('unit', 'toz');
       const response = await fetch(url, { signal: AbortSignal.timeout(12_000), headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error(`provider_http_${response.status}`);
+      if (!response.ok) {
+        // Capture the upstream error body for diagnostics (metals.dev error responses
+        // never include the api_key, so this is safe to log). The short `provider_http_NNN`
+        // message stays the stable reason code used for incident grouping/KV keys;
+        // the raw body only rides along as `error.detail` for console logging.
+        const bodyText = await response.text().catch(() => '');
+        const error = new Error(`provider_http_${response.status}`);
+        error.detail = {
+          provider: 'METALS_DEV_SPOT', endpoint: `${API_BASE}/latest`, status: response.status,
+          responseBody: bodyText.slice(0, 300), symbols: requestedInstruments.map((item) => item.id),
+          params: { currency: 'USD', unit: 'toz' },
+        };
+        throw error;
+      }
       const payload = await response.json();
       if (payload?.status !== 'success') throw new Error('provider_invalid_payload');
       const result = new Map();

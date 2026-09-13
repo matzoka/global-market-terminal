@@ -74,19 +74,30 @@ test('STALE 2 consecutive => WARNING notification', async () => {
     const result = await evaluateAlerts([makeRow('SPX', 'STALE', 'provider_request_failed', 'ALPACA_IEX')],
       { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
     assert.equal(result.alertsSent, 1);
-    assert.match(mock.posts[0].body.content, /GMT ALERT — WARNING/);
-    assert.match(mock.posts[0].body.content, /Affected:\s*SPX/);
+    assert.match(mock.posts[0].body.content, /データ取得障害（警告）/);
+    assert.match(mock.posts[0].body.content, /SPX/);
   } finally { mock.restore(); }
 });
 
-test('new UNAVAILABLE => CRITICAL immediate notification', async () => {
+test('new UNAVAILABLE, narrow (few instruments) => WARNING immediate notification', async () => {
   const kv = makeKv();
   const mock = installDiscordMock();
   try {
     const result = await evaluateAlerts([makeRow('SX5E', 'UNAVAILABLE', 'provider_request_failed', 'YAHOO_FINANCE_INDEX')],
       { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
     assert.equal(result.alertsSent, 1);
-    assert.match(mock.posts[0].body.content, /GMT ALERT — CRITICAL/);
+    assert.match(mock.posts[0].body.content, /データ取得障害（警告）/);
+  } finally { mock.restore(); }
+});
+
+test('new UNAVAILABLE, broad (>= 5 instruments) => CRITICAL immediate notification', async () => {
+  const kv = makeKv();
+  const mock = installDiscordMock();
+  try {
+    const rows = ['SPX', 'NDX', 'DJI', 'DAX', 'FTSE'].map((id) => makeRow(id, 'UNAVAILABLE', 'provider_request_failed', 'YAHOO_FINANCE_INDEX'));
+    const result = await evaluateAlerts(rows, { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
+    assert.equal(result.alertsSent, 1);
+    assert.match(mock.posts[0].body.content, /データ取得障害（重大）/);
   } finally { mock.restore(); }
 });
 
@@ -101,8 +112,10 @@ test('multiple instruments under one provider are aggregated into a single incid
     ];
     const result = await evaluateAlerts(rows, { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
     assert.equal(result.alertsSent, 1, 'one incident, not three');
-    assert.match(mock.posts[0].body.content, /Affected:\s*SPX, NDX, DJI/);
-    assert.match(mock.posts[0].body.content, /3\/3/);
+    assert.match(mock.posts[0].body.content, /SPX/);
+    assert.match(mock.posts[0].body.content, /NDX/);
+    assert.match(mock.posts[0].body.content, /DJI/);
+    assert.match(mock.posts[0].body.content, /3項目中3項目/);
   } finally { mock.restore(); }
 });
 
@@ -114,7 +127,7 @@ test('duplicate incident within cooldown is not re-notified', async () => {
     const env = { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' };
     const first = await evaluateAlerts(rows, env, {});
     assert.equal(first.alertsSent, 1);
-    // Immediate second evaluation (within 30min cooldown) must NOT send again.
+    // Immediate second evaluation (within the 12h cooldown) must NOT send again.
     const second = await evaluateAlerts(rows, env, {});
     assert.equal(second.alertsSent, 0);
     assert.equal(mock.posts.length, 1);
@@ -130,13 +143,13 @@ test('WARNING -> CRITICAL escalation notifies even within cooldown', async () =>
     await evaluateAlerts([makeRow('SPX', 'STALE', 'provider_request_failed', 'ALPACA_IEX')], env, {});
     await evaluateAlerts([makeRow('SPX', 'STALE', 'provider_request_failed', 'ALPACA_IEX')], env, {});
     assert.equal(mock.posts.length, 1);
-    // Now the same provider escalates to multiple UNAVAILABLE -> CRITICAL.
-    const result = await evaluateAlerts([
-      makeRow('SPX', 'UNAVAILABLE', 'provider_request_failed', 'ALPACA_IEX'),
-      makeRow('AAPL', 'UNAVAILABLE', 'provider_request_failed', 'ALPACA_IEX'),
-    ], env, {});
+    // Now the same provider escalates to a broad (>= 5 instrument) UNAVAILABLE outage -> CRITICAL.
+    const result = await evaluateAlerts(
+      ['SPX', 'AAPL', 'NVDA', 'MSFT', 'GOOGL'].map((id) => makeRow(id, 'UNAVAILABLE', 'provider_request_failed', 'ALPACA_IEX')),
+      env, {},
+    );
     assert.equal(result.alertsSent, 1, 'escalation re-notifies');
-    assert.match(mock.posts[1].body.content, /GMT ALERT — CRITICAL/);
+    assert.match(mock.posts[1].body.content, /データ取得障害（重大）/);
   } finally { mock.restore(); }
 });
 
@@ -152,8 +165,8 @@ test('recovery sends exactly one RECOVERED notification', async () => {
     const recover = await evaluateAlerts([makeRow('SX5E', 'PARTIAL_REALTIME', null, 'YAHOO_FINANCE_INDEX')], env, {});
     assert.equal(recover.recovered, 1);
     assert.equal(mock.posts.length, 2);
-    assert.match(mock.posts[1].body.content, /GMT RECOVERED/);
-    assert.match(mock.posts[1].body.content, /Duration:/);
+    assert.match(mock.posts[1].body.content, /Global Market Terminal — 復旧/);
+    assert.match(mock.posts[1].body.content, /障害継続時間：/);
     // Second healthy run must NOT send another recovery.
     const again = await evaluateAlerts([makeRow('SX5E', 'PARTIAL_REALTIME', null, 'YAHOO_FINANCE_INDEX')], env, {});
     assert.equal(again.recovered, 0);
