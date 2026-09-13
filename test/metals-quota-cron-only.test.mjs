@@ -280,13 +280,18 @@ test('scheduled path recovers metals when KV OK (RECOVERED state possible)', asy
 
 test('scheduled path keeps CRITICAL when KV FAILED (no false recovery)', async () => {
   process.env.METALS_DEV_API_KEY = 'test-key';
+  // Timestamps must stay relative to "now": a fixed past date would eventually
+  // fall outside the 12h upstream-retry cooldown in refreshMetalsSpot(), letting
+  // the stubbed fetch (always success) flip the KV cache to OK and make this
+  // "stays UNAVAILABLE" test flake purely from the passage of real time.
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const priorIncident = {
     status: 'UNAVAILABLE', reason: 'provider_http_400', consecutiveFailures: 3,
-    firstDetectedAt: '2026-09-01T00:00:00.000Z', lastDetectedAt: '2026-09-08T00:00:00.000Z',
-    lastAlertAt: '2026-09-08T00:00:00.000Z', severity: 'CRITICAL',
+    firstDetectedAt: oneHourAgo, lastDetectedAt: oneHourAgo,
+    lastAlertAt: oneHourAgo, severity: 'CRITICAL',
     affected: ['XAU', 'XAG', 'XPT', 'XPD'], alerted: true, recoveryNotified: false,
   };
-  const failedRecord = { attemptedAt: '2026-09-08T12:00:00.000Z', status: 'FAILED', reason: 'provider_http_400' };
+  const failedRecord = { attemptedAt: oneHourAgo, status: 'FAILED', reason: 'provider_http_400' };
   const kv = fakeKvWithList({
     'METALS_DEV_SPOT|provider_http_400': JSON.stringify(priorIncident),
     metals_dev_spot: JSON.stringify(failedRecord),
