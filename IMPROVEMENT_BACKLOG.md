@@ -255,9 +255,10 @@
 2. ~~**P2-INDEX-REFRESH**~~ — **Completed**（30min refresh / range=3mo / provider 内 chart memo reuse。Cloudflare instance 間共有は将来課題）。
 3. **P2-HOLIDAY** — 営業日・祝日判定精度向上。主要市場の軽量祝日カレンダー（固定リスト or keyless API）を `MARKETS` セッション状態へ反映。FX/暗号/先物の「前営業日」選択精度向上。
 4. **P2-PROVENANCE-UI** — カード表面での出所・基準時刻の一覧性向上。現在は詳細ドロワー内のみ provenance を表示。一覧・カードでも軽量に表示。
-5. **P2-ALERT** — STALE / UNAVAILABLE 発生時の Discord アラート。P2-VER2 で `verify-provider.mjs` の死コード化を指摘済み。健全性スナップショット出力と組み合わせて通知。
+5. ~~**P2-ALERT**~~ — **実装済み**（下記 P2-ALERT-FIX で毎時連投バグ・日本語化・Severity再評価まで対応）。
 6. **P2-YEN-EXPAND** — ACWI 円換算参考（P1-YEN）の米国株19銘柄への展開。P1-YEN で温存した拡張案。期間一致ゲート・provenance 設計を流用。
 7. **P2-ACCEPTANCE** — 「16/16 受入セット」の機械判定化。`ACCEPTANCE_IDS`（16銘柄）をコード化し、ヘルス/受入エンドポイントで受入ラインを機械的に返す。16/16 は引き続きユーザー側受入確認セット（アプリ内定数なし）の定義を維持。実装は行わず、将来の自動化案として保持。
+8. **P2-ALERT-SEVERITY** — Severity判定の高度化。現行（P2-ALERT-FIX で導入）は「影響銘柄数 ≥5件でCRITICAL、それ未満はWARNING」という件数のみの閾値。将来は件数だけでなく、銘柄の重要度（例: 主要指数・米国株 vs 補助的な参考値）やアプリの主要機能への影響度も加味した判定へ改善する。ユーザー承認済み・着手時期未定（2026-09-13 起票）。見積: M。
 
 ---
 
@@ -323,3 +324,28 @@
 - **テスト**: 4銘柄→`GC=F`/`SI=F`/`PL=F`/`PA=F`、`instrumentType FUTURE` 検証、非FUTURE reject、`YAHOO_FINANCE_METAL_FUTURES` が bars provider、`METALS_DEV_SPOT` は quote provider のまま、最新barをcurrent・直前barをprevious、先物変動率算出、bars不足時非表示、スポット日次変動「—」維持、金属以外に先物セクション非表示、P1-CHG/YEN/FTSE 回帰なし。
 - **確認結果**: `npm test` 44/44 PASS（既存36 + P1-CHG-METAL 8）。GitHub main push 済み（`ab4d6c5`）。Cloudflare 自動 Deploy 確認済み。本番: 金属4銘柄スポット `METALS_DEV_SPOT` 維持・`prevClose=null`（「—」）、`/bars` provider 全4銘柄 `YAHOO_FINANCE_METAL_FUTURES`、`deliveryLabel=YAHOO FINANCE — METAL FUTURES REFERENCE`、詳細チャート正常（XAU 最新4476.6/前4429.8 等）、既存43銘柄に回帰なし。
 - **見積**: S
+
+---
+
+## P2-ALERT-FIX — METALS_DEV_SPOT 毎時連投バグ修正・アラート日本語化・Severity再評価（実装完了）
+
+- **状態**: Completed（コード修正・デプロイ）。貴金属データ自体の復旧は Waiting（下記参照）。
+- **実装日**: 2026-09-13
+- **発端**: Discord #hermes-chat に `METALS_DEV_SPOT` の CRITICAL 通知が毎時間ほぼ同一内容で連投（本番 KV 確認で `consecutiveFailures: 239`）。
+
+### 根本原因（実データで確認・推測なし）
+- **Discord 連投**: `alert-service.mjs` の `ALERT_COOLDOWN_MS` が 30分固定で、Cron 実行間隔（`wrangler.jsonc` の `*/30 * * * *`）と同一だったため、未解決インシデントをほぼ毎回再送していた。
+- **METALS_DEV_SPOT の HTTP 400**: `wrangler dev --remote` で本番の実 `METALS_DEV_API_KEY` シークレットを使い metals.dev `/v1/latest` を直接検証（キー自体は非ログ化、レスポンス本文のみ確認）。結果は `error_code 1203`「Your plan quota for the month is exhausted.」— **metals.dev 無料プランの月間クォータ枯渇**が真因。リクエスト形状（`api_key`/`currency=USD`/`unit=toz`）は metals.dev 公式ドキュメントの example と一致しており不備なし。`METALS_DEV_SPOT` の `DEV` は metals.dev のブランド名であり、開発/試験用providerの混入ではないことも確認済み。2026-09-08 の既存修正（`f2bba91`/`e433b1b`、KVクォータcooldown追加）は「将来のクォータ超過防止」であり、その時点で既に枯渇していた当月分は解消しない。
+
+### 採用方針（承認済み・2026-09-13）
+- **貴金属データ復旧方針: (B) 有料プランへ変更せず、当月のクォータリセットを待つ**。(A) 有料プランアップグレード、(C) `YAHOO_FINANCE_METAL_FUTURES`（先物）をspot代用にするフォールバックは**却下**。
+  - **却下理由**: (C) は「スポットと先物を混同しない」という現行設計方針（P1-CHG-METAL 参照）を破るため、明示的に不採用。**将来のエージェントはこの案を再提案しないこと**（承認済みの上で却下済み）。
+- **Discord通知**: 同一インシデントは初回1回のみ通知、以後は状態変化 or 12時間ごとのリマインドのみ（`ALERT_COOLDOWN_MS` を 30分→12時間へ変更）。復旧時は既存の RECOVERED 通知の仕組みをそのまま流用（日本語化のみ実施）。
+- **Severity**: `UNAVAILABLE` は影響銘柄数 5件未満なら WARNING、5件以上なら CRITICAL（従来は件数に関わらず常に CRITICAL）。**今回の閾値5は暫定**。将来の高度化は上記 `P2-ALERT-SEVERITY` へ記録済み。
+- **日本語化**: Discordアラート/復旧通知本文を日本語化（対象銘柄・状態・原因・初回検出・影響をすべて日本語表記、時刻はJST表示）。
+- **ログ改善**: `metals-dev.mjs` の HTTP 失敗時にレスポンス本文・endpoint・symbol・requestパラメータを `error.detail` として捕捉しログ出力（API keyは含めない）。インシデントグルーピング/KVキーに使う短い理由コード `provider_http_NNN` 自体は変更なし。
+- **変更ファイル**: `server/alert-service.mjs`（cooldown・severity・日本語フォーマッタ）、`server/providers/metals-dev.mjs`（失敗時detail捕捉）、`server/market-service.mjs`（detailのログ出力）、`test/alert-service.test.mjs`（新文言・新閾値へ更新）、`test/metals-quota-cron-only.test.mjs`（日付ハードコードによる経年劣化flakeを修正）。
+- **テスト**: `npm test` 94/94 PASS。加えて本番相当データで `formatAlert`/`formatRecovery` を手動実行し日本語表示・cooldown抑制・復旧通知を確認。
+- **確認結果**: PR [#1](https://github.com/matzoka/global-market-terminal/pull/1) を `main` へマージ（`a7316a0`）。Cloudflare 自動Deploy 確認済み（マージ18秒後にデプロイ、`/api/v1/health` 200 OK、`instrumentCount: 43`、`unavailableCount: 4` = 既知の金属クォータ枯渇のみ、新規回帰なし）。
+- **未解決・監視事項**: `XAU/XAG/XPT/XPD` は metals.dev クォータリセットまで `UNAVAILABLE`（WARNING表示・連投なし）が継続する想定。リセット後の復旧確認はユーザー割り当てタスクとして別途管理（元Issue: Global Market Terminal プロジェクト参照）。
+- **見積**: M
