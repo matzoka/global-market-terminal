@@ -54,7 +54,9 @@ Implemented and available in the current release:
 
 - **Global equities & indices** — world indices (S&P 500, NASDAQ 100, Nikkei
   225, DAX, Hang Seng, Shanghai, ASX, EURO STOXX 50, FTSE 100 shown as
-  unavailable when no free source resolves it, etc.) plus a U.S. equity heatmap
+  FTSE 100 and the full index set are served via Yahoo Finance reference
+providers (`YAHOO_FINANCE_FTSE`, `YAHOO_FINANCE_INDEX`) as `UNVERIFIED` when
+not covered by Alpaca/EODHD, etc.) plus a U.S. equity heatmap
   (NVIDIA, Microsoft, Apple, energy, financials, …).
 - **Foreign exchange** — major pairs (USD/JPY, EUR/USD, GBP/USD, AUD/USD,
   EUR/JPY) with ECB daily reference series.
@@ -73,8 +75,11 @@ Implemented and available in the current release:
 - **Provenance badges** — color-coded status badges for every instrument.
 
 Features that are **not** implemented (do not assume they exist): order entry,
-portfolio tracking, alerts/notifications, backtesting, and any paid-data
-aggregation beyond what the configured free providers return.
+portfolio tracking, backtesting, and any paid-data aggregation beyond what the
+configured free providers return.
+
+Alerting is implemented (see [Alerting](#alerting) below) but is optional and
+off by default unless `DISCORD_WEBHOOK_URL` is configured.
 
 ---
 
@@ -127,6 +132,7 @@ No React/Vue/Svelte, no build step, no database.
 | **Twelve Data** | Optional licensed FX / general quotes | **Yes** (paid/licensed plan) |
 | **CoinGecko** (public) | Aggregated crypto reference (BTC/ETH/SOL/XRP in JPY) | **No** (public endpoint) |
 | **Frankfurter** (ECB) | ECB daily FX reference series | **No** (public endpoint) |
+| **Yahoo Finance** (reference, keyless) | FTSE 100, 9 global indices, and metal futures reference when not covered by the above (`YAHOO_FINANCE_FTSE` / `YAHOO_FINANCE_INDEX` / `YAHOO_FINANCE_METAL_FUTURES`) | **No** (public endpoint, best-effort/`UNVERIFIED`) |
 
 Notes:
 
@@ -141,6 +147,31 @@ Notes:
   Terminal caps retrieval to three batches per day.
 - Never embed any provider key in browser-side JavaScript. Keys live only in
   the server process environment.
+- Yahoo Finance reference providers are always registered (independent of
+  EODHD/Alpaca key presence) and are labelled `UNVERIFIED` since delivery timing
+  cannot be independently confirmed.
+
+---
+
+## Alerting
+
+A Cloudflare Cron Trigger (`*/30 * * * *`, see `wrangler.jsonc`) runs
+`server/alert-service.mjs` on every tick. It inspects instrument quote status
+(`STALE` / `UNAVAILABLE`), tracks incidents in the `GMT_ALERT_STATE` KV namespace,
+and posts a Discord webhook notification when a new or re-triggered incident
+crosses the severity thresholds:
+
+- **CRITICAL** — `UNAVAILABLE` affecting **5 or more** instruments, or `STALE`
+  with ≥ 2 consecutive failures **and** ≥ 2 affected instruments.
+- **WARNING** — `UNAVAILABLE` affecting fewer than 5 instruments, or `STALE` with
+  ≥ 2 consecutive failures but fewer than 2 affected instruments.
+- **INFO** — a single `STALE` first failure is recorded only (no notification).
+
+A 12-hour cooldown suppresses repeat notifications for the same unresolved
+incident; it is bypassed when severity worsens or the incident recurs after a
+prior recovery. Set `DISCORD_WEBHOOK_URL` as a Worker Secret to enable delivery;
+if unset, evaluation still runs but no notification is sent. Alert delivery
+failures never affect the dashboard, health check, or quote refresh.
 
 ---
 
@@ -242,6 +273,7 @@ no filesystem reads of secrets beyond the process environment.
 │   ├── worker.mjs          # Cloudflare Worker entry (fetch handler + API routes)
 │   ├── config.mjs          # Environment-driven configuration
 │   ├── market-service.mjs  # Quote/bar orchestration + in-memory cache
+│   ├── alert-service.mjs   # Cron-triggered incident/alert evaluation (Discord webhook)
 │   ├── instruments.mjs     # Instrument registry
 │   └── providers/          # Pluggable provider adapters
 │       ├── alpaca.mjs
@@ -375,7 +407,9 @@ integration handles CI/CD. (Verified: push to `main` → Cloudflare Builds →
 ### Notes
 
 - The Worker keeps an **in-memory cache** for quotes and bars (TTL governed by
-  `QUOTE_CACHE_SECONDS`); no disk, KV, or D1 storage is used.
+  `QUOTE_CACHE_SECONDS`); no disk or D1 storage is used. A KV namespace
+  (`GMT_ALERT_STATE`) is used solely for alert-incident state — not for quote
+  caching. See [Alerting](#alerting).
 - The app sends a restrictive CSP and binds only to the Worker's `fetch` handler
   on Cloudflare; there is no loopback port to expose.
 - For a **self-hosted Node deployment**, see the legacy/local-only note above

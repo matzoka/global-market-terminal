@@ -34,7 +34,7 @@ Global Market Terminal は **閲覧専用の市場観察ダッシュボード** 
 
 現在のリリースで実装・提供されている機能:
 
-- **世界の株式・指数** — 世界の指数（S&P 500、NASDAQ 100、日経 225、DAX、香港ハンセン、上海、ASX、EURO STOXX 50、無料ソースが解決しない FTSE 100 等は `UNAVAILABLE` と表示）に加え、米国株式ヒートマップ（NVIDIA、Microsoft、Apple、エネルギー、金融など）。
+- **世界の株式・指数** — 世界の指数（S&P 500、NASDAQ 100、日経 225、DAX、香港ハンセン、上海、ASX、EURO STOXX 50、FTSE 100 を含む全指数セットは、Alpaca/EODHD がカバーしない場合に Yahoo Finance リファレンスプロバイダー（`YAHOO_FINANCE_FTSE`、`YAHOO_FINANCE_INDEX`）経由で `UNVERIFIED` として提供されます）に加え、米国株式ヒートマップ（NVIDIA、Microsoft、Apple、エネルギー、金融など）。
 - **為替（FX）** — 主要通貨ペア（USD/JPY、EUR/USD、GBP/USD、AUD/USD、EUR/JPY）と ECB 日次リファレンス系列。
 - **暗号資産** — BTC、ETH、SOL、XRP を JPY 建てで集計パブリックリファレンス経由で表示（取引所口座不要）。
 - **金属** — 金・銀・プラチナ・パラジウムのスポットリファレンス（クォータキャッシュ）。
@@ -45,7 +45,9 @@ Global Market Terminal は **閲覧専用の市場観察ダッシュボード** 
 - **詳細ドロワー** — 検証済み相場、提供元、配信区分、タイムスタンプ、タイル面積の根拠、提供元が返した価格履歴。
 - **来歴バッジ** — 全銘柄に色分けされたステータスバッジ。
 
-**実装されていない** 機能（存在すると思い込まないでください）: 注文入力、ポートフォリオ管理、アラート/通知、バックテスト、および設定した無料プロバイダーが返す範囲を超える有料データ集約。
+**実装されていない** 機能（存在すると思い込まないでください）: 注文入力、ポートフォリオ管理、バックテスト、および設定した無料プロバイダーが返す範囲を超える有料データ集約。
+
+アラートは実装されています（詳細は [アラート](#アラート) を参照）。ただし任意であり、`DISCORD_WEBHOOK_URL` を設定しない限り既定ではオフです。
 
 ---
 
@@ -88,6 +90,7 @@ React/Vue/Svelte なし、ビルドステップなし、データベースなし
 | **Twelve Data** | オプションのライセンス付き FX / 一般相場 | **Yes**（有料/ライセンスプラン） |
 | **CoinGecko** (public) | 集計済み暗号資産リファレンス（BTC/ETH/SOL/XRP を JPY 建て） | **No**（パブリックエンドポイント） |
 | **Frankfurter** (ECB) | ECB 日次 FX リファレンス系列 | **No**（パブリックエンドポイント） |
+| **Yahoo Finance** (reference, keyless) | FTSE 100、9 グローバル指数、およびメタル先物リファレンス（上記以外をカバーする場合、`YAHOO_FINANCE_FTSE` / `YAHOO_FINANCE_INDEX` / `YAHOO_FINANCE_METAL_FUTURES`） | **No**（パブリックエンドポイント、best-effort / `UNVERIFIED`） |
 
 補足:
 
@@ -95,6 +98,19 @@ React/Vue/Svelte なし、ビルドステップなし、データベースなし
 - Alpaca の IEX フィードは **米国の単一取引所** であり、統合市場フィードではありません。これを経由する銘柄は `IEX PARTIAL` とラベルされ、ヘッダーは `IEX DATA — PARTIAL MARKET` と表示されます。全体市場の最新価格として読んではいけません。
 - Metals.dev の無料ティアはクォータ制限あり（月約 100 リクエスト）。Global Market Terminal は取得を 1 日 3 回までに制限します。
 - プロバイダーキーをブラウザ側 JS に埋め込んではいけません。キーはサーバープロセス環境のみに存在します。
+- Yahoo Finance リファレンスプロバイダーは常に登録されています（EODHD/Alpaca のキー有無にかかわらず）。配信タイミングを独立して確認できないため `UNVERIFIED` とラベルされます。
+
+---
+
+## アラート
+
+Cloudflare Cron Trigger（`*/30 * * * *`、`wrangler.jsonc` 参照）が各ティックで `server/alert-service.mjs` を実行します。銘柄の相場ステータス（`STALE` / `UNAVAILABLE`）を検査し、`GMT_ALERT_STATE` KV 名前空間で障害を記録し、新規または再発した障害が重大度しきい値を超えたときに Discord webhook 通知を送信します。
+
+- **CRITICAL** — `UNAVAILABLE` で影響銘柄が **5 つ以上**、または `STALE` で連続失敗が 2 回以上 **かつ** 影響銘柄が 2 つ以上。
+- **WARNING** — `UNAVAILABLE` で影響銘柄が 5 未満、または `STALE` で連続失敗が 2 回以上だが影響銘柄が 2 未満。
+- **INFO** — 初回の単発 `STALE` は記録のみ（通知なし）。
+
+12 時間のクールダウンにより、同じ未解決障害の再通知を抑制します。重大度が悪化した場合、または一度回復した障害が再発した場合はクールダウンを無視します。`DISCORD_WEBHOOK_URL` を Worker Secret として設定すると配信が有効になります。未設定の場合も評価は実行されますが通知は送信されません。アラート配信の失敗がダッシュボード・ヘルスチェック・相場更新に影響を与えることはありません。
 
 ---
 
@@ -181,6 +197,7 @@ EnvironmentFile=%h/.config/global-market-terminal/runtime.env
 │   ├── worker.mjs          # Cloudflare Worker エントリ（fetch handler + API ルート）
 │   ├── config.mjs          # 環境駆動の設定
 │   ├── market-service.mjs  # 相場/ローソク足オーケストレーション + メモリ内キャッシュ
+│   ├── alert-service.mjs   # Cron 起動の障害/アラート評価（Discord webhook）
 │   ├── instruments.mjs     # 銘柄レジストリ
 │   └── providers/          # プラガブルなプロバイダーアダプター
 │       ├── alpaca.mjs
@@ -296,7 +313,7 @@ GitHub リポジトリを Cloudflare Workers Builds に接続します:
 
 ### 補足
 
-- Worker は相場/ローソク足を **メモリ内キャッシュ** に保持します（TTL は `QUOTE_CACHE_SECONDS` で制御）。ディスク・KV・D1 は使用しません。
+- Worker は相場/ローソク足を **メモリ内キャッシュ** に保持します（TTL は `QUOTE_CACHE_SECONDS` で制御）。ディスク・D1 は使用しません。KV 名前空間（`GMT_ALERT_STATE`）は相場キャッシュではなく、アラート障害状態の記録のみに使用されます。詳細は [アラート](#アラート) を参照。
 - アプリは厳格な CSP を送信し、Cloudflare 上では Worker の `fetch` handler のみに束縛されます。公開すべきループバック port はありません。
 - 代わりに自前ホストの Node デプロイを行う場合は、上記のヘッドレスシークレットの注意を参照し、`node server/worker.mjs` を認証付きリバースプロキシ配下で起動してください。
 
