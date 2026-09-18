@@ -149,7 +149,13 @@ function formatAlert({ severity, provider, affected, status, reason, firstDetect
     `影響：`,
     `${total}項目中${count}項目`,
     '',
-    `※同一障害の継続中は再通知しません（内容が変化した場合を除く）`,
+    // Describe the ACTUAL behaviour implemented in evaluateAlerts():
+    // within the cooldown the incident is re-notified only when it escalates
+    // (or after a recovery), and an unresolved incident is re-notified every
+    // ALERT_COOLDOWN_MS (12h). Earlier wording claimed "no re-notification
+    // while ongoing", which contradicted the 12h reminder users receive.
+    `※同一障害が継続中の場合、12時間ごとにこの通知を再送します`,
+    `※重症度が上がった場合は、12時間を待たずに再通知します`,
     `※復旧時に再度通知します`,
   ].join('\n');
 }

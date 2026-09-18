@@ -217,3 +217,42 @@ test('webhook URL is never written to logs', async () => {
     console.error = originalError;
   }
 });
+
+// --- Footer wording must match the implemented re-notification behaviour ---
+test('alert footer documents the 12h reminder instead of claiming no re-notification', async () => {
+  const kv = makeKv();
+  const mock = installDiscordMock();
+  try {
+    await evaluateAlerts([makeRow('SX5E', 'UNAVAILABLE', 'provider_request_failed', 'YAHOO_FINANCE_INDEX')],
+      { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
+    const text = mock.posts[0].body.content;
+    assert.match(text, /12時間ごとにこの通知を再送します/, 'must state the reminder cadence');
+    assert.match(text, /重症度が上がった場合は/, 'must state the escalation exception');
+    assert.ok(!/再通知しません/.test(text), 'must not claim that ongoing incidents are never re-notified');
+  } finally { mock.restore(); }
+});
+
+// --- Ongoing incident is re-notified once the 12h cooldown elapses ---
+test('unresolved incident is re-notified as a reminder after the 12h cooldown', async () => {
+  const nowMs = Date.now();
+  const kv = makeKv({
+    'YAHOO_FINANCE_INDEX|provider_request_failed': JSON.stringify({
+      status: 'UNAVAILABLE', reason: 'provider_request_failed', consecutiveFailures: 40,
+      firstDetectedAt: new Date(nowMs - 14 * 3600 * 1000).toISOString(),
+      lastDetectedAt: new Date(nowMs - 30 * 60 * 1000).toISOString(),
+      lastAlertAt: new Date(nowMs - 13 * 3600 * 1000).toISOString(),
+      severity: 'WARNING', affected: ['SX5E'], alerted: true, recoveryNotified: false,
+    }),
+  });
+  const mock = installDiscordMock();
+  try {
+    const result = await evaluateAlerts([makeRow('SX5E', 'UNAVAILABLE', 'provider_request_failed', 'YAHOO_FINANCE_INDEX')],
+      { GMT_ALERT_STATE: kv, DISCORD_WEBHOOK_URL: 'https://discord.example/webhook' }, {});
+    assert.equal(result.alertsSent, 1, '13h since last alert (cooldown 12h) => reminder sent');
+    assert.match(mock.posts[0].body.content, /データ取得障害（警告）/);
+    // Same incident keeps its original firstDetectedAt (not a fresh incident).
+    const stored = JSON.parse(kv._store.get('YAHOO_FINANCE_INDEX|provider_request_failed'));
+    assert.equal(stored.firstDetectedAt, new Date(nowMs - 14 * 3600 * 1000).toISOString());
+    assert.equal(stored.consecutiveFailures, 41, 'failure counter keeps accumulating');
+  } finally { mock.restore(); }
+});

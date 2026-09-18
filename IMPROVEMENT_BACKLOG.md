@@ -349,3 +349,28 @@
 - **確認結果**: PR [#1](https://github.com/matzoka/global-market-terminal/pull/1) を `main` へマージ（`a7316a0`）。Cloudflare 自動Deploy 確認済み（マージ18秒後にデプロイ、`/api/v1/health` 200 OK、`instrumentCount: 43`、`unavailableCount: 4` = 既知の金属クォータ枯渇のみ、新規回帰なし）。
 - **未解決・監視事項**: `XAU/XAG/XPT/XPD` は metals.dev クォータリセットまで `UNAVAILABLE`（WARNING表示・連投なし）が継続する想定。リセット後の復旧確認はユーザー割り当てタスクとして別途管理（元Issue: Global Market Terminal プロジェクト参照）。
 - **見積**: M
+
+---
+
+## P2-ALERT-WORDING — 通知末尾文言と再通知実装の不整合修正（実装完了・`main` 反映済み）
+
+- **状態**: 実装完了。`main` へ反映（Cloudflare 自動Deploy・本番 `/api/v1/health` で確認済み）。
+- **発端**: 2026-09-19 05:30 JST の12時間リマインド通知を受領したユーザーから、末尾文言「※同一障害の継続中は再通知しません（内容が変化した場合を除く）」が実装（継続中も12時間ごとに再送）と矛盾しているとの指摘。
+- **判断**: 実装（`ALERT_COOLDOWN_MS = 12h` による継続中リマインド＋escalation 時の即時再通知）が正であり、文言側が誤り。文言を実挙動に合わせる。
+- **変更**: `server/alert-service.mjs` `formatAlert()` 末尾3行を実挙動に一致させる。
+  - 旧: `※同一障害の継続中は再通知しません（内容が変化した場合を除く）`
+  - 新: `※同一障害が継続中の場合、12時間ごとにこの通知を再送します` / `※重症度が上がった場合は、12時間を待たずに再通知します` / `※復旧時に再度通知します`
+- **テスト**: `test/alert-service.test.mjs` に回帰テスト2件追加（(1) 末尾文言がリマインド仕様と一致し「再通知しません」を含まないこと、(2) 最終通知から13時間経過した継続インシデントが再通知され、`firstDetectedAt` と `consecutiveFailures` が引き継がれること）。`npm test` **96/96 PASS**（`main` 基準。当該修正を単独で `main` に載せた状態の実測値）。
+- **非変更事項**: 通知の送信条件・KVスキーマ・Severity閾値（`P2-ALERT-SEVERITY`）・METALS_DEV_SPOT のクォータ枯渇対応方針（B: リセット待ち）はいずれも変更なし。表示文言のみ。
+
+---
+
+## P3-HEALTH-DUP — provider単位ヘルス診断の重複実装（Multica裁定待ち）
+
+- **状態**: 未解決。`main` には未反映（どちらの実装もpush・デプロイしていない）。
+- **事実**: 同一機能「`/api/v1/health` に `providers[]` 診断を追加」の実装が**2つ**存在する。いずれもローカルブランチのみで、リモート未push。
+  - `a1cb39f` — worktree `~/projects/gmt1-market-terminal` / branch `p3-health-provider-diagnostics`（`server/market-service.mjs` +45/-3、`test/health-providers.test.mjs` +130）
+  - `4ac051a` — worktree `~/projects/gmt1-hy3-health` / branch `hy3-health-provider-diagnostics`（`server/market-service.mjs` +96、`test/health-providers.test.mjs` +152）
+  - 両者とも 2026-09-18 未明に作成（02:09 / 02:20、authorは同一）。公開APIの形（`id`/`status`/`instrumentCount`/`evaluated`/`ok|unavailable|stale|notFetched`/`lastSuccessAt`）はほぼ同一で、実装規模とテスト構成が異なる。
+- **方針**: ユーザー指示により今後のアプリ修正は **Multica経由**。どちらかを盲目的にpushせず、MulticaのIssueとして**両案を入力に統合・裁定**する。worktreeとbranchは成果を失わないため削除しない。
+- **注意**: `main` のテスト基準は本エントリ時点で 96/96（各案はそれぞれ+5テストを追加する）。
