@@ -73,6 +73,7 @@ not covered by Alpaca/EODHD, etc.) plus a U.S. equity heatmap
 - **Detail drawer** — verified quote, source, delivery classification,
   timestamps, tile-area basis, and provider-returned price history.
 - **Provenance badges** — color-coded status badges for every instrument.
+- **CSV export** — save the currently displayed "Universe" panel rows (group, instrument id, symbol, name, price, daily change, change basis, provider, delivery, status, as-of, fetched-at) as an Excel-friendly UTF-8 CSV with a BOM.
 
 Features that are **not** implemented (do not assume they exist): order entry,
 portfolio tracking, backtesting, and any paid-data aggregation beyond what the
@@ -265,6 +266,7 @@ no filesystem reads of secrets beyond the process environment.
 │   │   └── terminal.css    # CRT-style theme (no frameworks/CDNs)
 │   ├── js/
 │   │   ├── adapters.js     # Browser data client (same-origin API)
+│   │   ├── csv.js          # CSV generation/download helpers (list export)
 │   │   ├── widgets.js      # Research widgets (universe, chart, radar, compare, clocks)
 │   │   └── dashboard.js    # Boot, layout persistence, data state
 │   └── assets/

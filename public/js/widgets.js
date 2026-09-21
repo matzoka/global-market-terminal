@@ -67,6 +67,48 @@ window.GMT = window.GMT || {};
       block.append(title, list, el('p', 'universe-note', group.note)); root.appendChild(block);
     });
     W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
+    var csvButton = document.getElementById('btn-universe-csv');
+    if (csvButton) csvButton.addEventListener('click', function (event) { event.stopPropagation(); W.exportUniverse(); });
+  };
+
+  var CSV_COLUMNS = [
+    { key: 'group', label: '区分' },
+    { key: 'id', label: '銘柄コード' },
+    { key: 'symbol', label: '表示記号' },
+    { key: 'name', label: '名称' },
+    { key: 'price', label: '価格' },
+    { key: 'changePercent', label: '前日比(%)' },
+    { key: 'changeBasis', label: '変化基準' },
+    { key: 'provider', label: '出所' },
+    { key: 'delivery', label: '配信区分' },
+    { key: 'status', label: '状態' },
+    { key: 'asOf', label: '基準時刻' },
+    { key: 'fetchedAt', label: '取得時刻' },
+  ];
+  W.exportUniverse = function () {
+    var rows = [];
+    GROUPS.forEach(function (group) {
+      group.ids.forEach(function (id) {
+        var item = G.get(id) || {}, quote = item.quote || {}, change = G.changePercent(item), status = statusOf(item);
+        rows.push({
+          group: group.label,
+          id: id,
+          symbol: item.displaySymbol || id,
+          name: item.name || '',
+          price: Number.isFinite(quote.price) ? quote.price : '',
+          changePercent: Number.isFinite(change) ? Number(change.toFixed(4)) : '',
+          changeBasis: changeLabel(item),
+          provider: quote.provider || '',
+          delivery: quote.deliveryLabel || '',
+          status: STATUS_LABEL[status] || '未取得',
+          asOf: quote.asOf || '',
+          fetchedAt: quote.fetchedAt || quote.receivedAt || '',
+        });
+      });
+    });
+    if (!rows.length || !G.csv) return false;
+    G.csv.download('gmt-universe-' + G.csv.filenameStamp() + '.csv', G.csv.toCsv(CSV_COLUMNS, rows));
+    return true;
   };
 
   function range(rows, key, direction) { return rows.reduce(function (result, row) { return direction === 'min' ? Math.min(result, row[key]) : Math.max(result, row[key]); }, direction === 'min' ? Infinity : -Infinity); }

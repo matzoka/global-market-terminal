@@ -212,6 +212,18 @@ body {
   font-size: 12px;
 }
 .span-btn:hover { color: var(--green); border-color: var(--border-hi); }
+.panel-csv-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--green);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 0 6px;
+  cursor: pointer;
+  transition: background 0.12s, box-shadow 0.12s, color 0.12s, border-color 0.12s;
+}
+.panel-csv-btn:hover, .panel-csv-btn:focus-visible { background: var(--amber); border-color: var(--amber); color: #151000; box-shadow: 0 0 10px rgba(255, 176, 0, 0.55); outline: none; }
 
 .panel-body { padding: 8px; flex: 1; min-height: 0; }
 

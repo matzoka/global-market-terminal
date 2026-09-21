@@ -120,7 +120,7 @@ window.GMT = window.GMT || {};
     var dragged = null;
     board.querySelectorAll('.panel:not(.fixed-panel)').forEach(function (panel) {
       panel.draggable = true;
-      panel.addEventListener('dragstart', function (event) { if (event.target.closest('.span-btn')) { event.preventDefault(); return; } dragged = panel; panel.classList.add('dragging'); say('パネルを移動中：目的の位置へドロップしてください。'); });
+      panel.addEventListener('dragstart', function (event) { if (event.target.closest('.span-btn, .panel-csv-btn')) { event.preventDefault(); return; } dragged = panel; panel.classList.add('dragging'); say('パネルを移動中：目的の位置へドロップしてください。'); });
       panel.addEventListener('dragend', function () { panel.classList.remove('dragging'); board.querySelectorAll('.drop-target').forEach(function (x) { x.classList.remove('drop-target'); }); dragged = null; saveLayout(); say('配置をこのブラウザに保存しました。'); });
       panel.addEventListener('dragover', function (event) { if (!dragged || dragged === panel || panel.classList.contains('fixed-panel')) return; event.preventDefault(); panel.classList.add('drop-target'); });
       panel.addEventListener('dragleave', function () { panel.classList.remove('drop-target'); });
