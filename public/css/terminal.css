@@ -463,6 +463,8 @@ td.flash-down { animation: flashDown 0.6s ease-out; }
 .universe-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 8px; }
 .universe-block { min-width: 0; border: 1px solid var(--border); background: var(--bg-inset); }
 .universe-title { display: flex; justify-content: space-between; gap: 8px; padding: 4px 6px; color: var(--green); font-size: 11px; font-weight: 700; letter-spacing: .7px; border-bottom: 1px solid var(--border); }
+.universe-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.universe-basis { color: var(--text-dim); font-size: 9px; font-weight: 400; letter-spacing: .3px; white-space: nowrap; }
 .universe-count { color: var(--text-dim); font-size: 9px; font-weight: 400; }
 .universe-list { display: grid; }
 .universe-row { min-width: 0; display: grid; grid-template-columns: minmax(68px, 1.15fr) minmax(58px, 1fr) 54px 58px auto; align-items: center; gap: 5px; padding: 4px 6px; border-bottom: 1px dotted #0c2417; cursor: pointer; }
