@@ -150,7 +150,14 @@ test('universe header shows one last-updated time and rows keep prices without r
   assert.equal(rows.length, 15);
   for (const row of rows) {
     assert.doesNotMatch(row.textContent, /更新 2026-09-21 20:01 UTC/);
+    assert.doesNotMatch(row.textContent, /前営業日比|前UTC日比/);
   }
+
+  const titles = byClass(root, 'universe-title');
+  assert.equal(titles.length, 3);
+  assert.doesNotMatch(titles[0].textContent, /前営業日比|前UTC日比/);
+  assert.equal(byClass(titles[1], 'universe-basis')[0].textContent, '前営業日比');
+  assert.equal(byClass(titles[2], 'universe-basis')[0].textContent, '前UTC日比');
 
   const changeBySymbol = Object.fromEntries(
     rows.map((row) => [byClass(row, 'u-symbol')[0].textContent, {
@@ -161,6 +168,6 @@ test('universe header shows one last-updated time and rows keep prices without r
   assert.equal(changeBySymbol.ACWI.price, '123.45');
   assert.equal(changeBySymbol.ACWI.change, '+1.23%');
   assert.equal(changeBySymbol.USDJPY.price, '147.123');
-  assert.equal(changeBySymbol.USDJPY.change, '-0.45% · 前営業日比');
+  assert.equal(changeBySymbol.USDJPY.change, '-0.45%');
   assert.equal(changeBySymbol.BTCJPY.price, '—');
 });
