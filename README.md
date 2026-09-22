@@ -74,6 +74,7 @@ not covered by Alpaca/EODHD, etc.) plus a U.S. equity heatmap
   timestamps, tile-area basis, and provider-returned price history.
 - **Provenance badges** — color-coded status badges for every instrument.
 - **CSV export** — save the currently displayed "Universe" panel rows (group, instrument id, symbol, name, price, daily change, change basis, provider, delivery, status, as-of, fetched-at) as an Excel-friendly UTF-8 CSV with a BOM.
+- **Last updated time** — the Universe panel header shows a single last-fetched timestamp for the displayed snapshot. The same instant is not repeated on every market row; per-instrument as-of times remain on badges, the detail drawer, and CSV.
 
 Features that are **not** implemented (do not assume they exist): order entry,
 portfolio tracking, backtesting, and any paid-data aggregation beyond what the

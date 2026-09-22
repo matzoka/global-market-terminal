@@ -32,6 +32,35 @@ window.GMT = window.GMT || {};
   }
   function polarity(value) { return Number.isFinite(value) && value < 0 ? 'num-down' : 'num-up'; }
   function statusOf(item) { return item && item.quote ? item.quote.status : 'UNAVAILABLE'; }
+  // One widget-level timestamp: latest quote fetch among displayed rows, then dashboard generatedAt.
+  // Keep this off the market rows so the same instant is not repeated 15 times.
+  function latestUniverseTimestamp() {
+    var latest = 0;
+    GROUPS.forEach(function (group) {
+      group.ids.forEach(function (id) {
+        var quote = (G.get(id) || {}).quote || {};
+        var ts = Date.parse(quote.fetchedAt || quote.receivedAt || '');
+        if (Number.isFinite(ts)) latest = Math.max(latest, ts);
+      });
+    });
+    if (latest) return new Date(latest).toISOString();
+    var generated = Date.parse((G.meta && G.meta.generatedAt) || '');
+    return Number.isFinite(generated) ? new Date(generated).toISOString() : null;
+  }
+  function formatUpdatedAt(iso) {
+    var date = new Date(iso || '');
+    if (Number.isNaN(date.getTime())) return '更新 --';
+    return '更新 ' + date.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  }
+  function renderUniverseUpdatedAt() {
+    var stamp = typeof document !== 'undefined' ? document.getElementById('universe-updated') : null;
+    if (!stamp) return;
+    var iso = latestUniverseTimestamp();
+    stamp.textContent = formatUpdatedAt(iso);
+    stamp.title = iso ? '注目市場データの最終更新（取得時刻） ' + iso : '注目市場データの最終更新時刻は未取得です';
+  }
+  W.latestUniverseTimestamp = latestUniverseTimestamp;
+  W.formatUpdatedAt = formatUpdatedAt;
   function sourceDetails(quote) { return [quote.provider, quote.deliveryLabel, quote.providerSymbol, quote.asOf && '基準 ' + quote.asOf, quote.fetchedAt && '取得 ' + quote.fetchedAt, quote.reason].filter(Boolean).join(' · '); }
   function sourceBadge(item) { var status = statusOf(item), badge = el('span', 'src-badge src-' + status.toLowerCase(), STATUS_LABEL[status] || '未取得'); if (item && item.quote) badge.title = sourceDetails(item.quote); return badge; }
   function setBadge(badge, item) { var status = statusOf(item); badge.className = 'src-badge src-' + status.toLowerCase(); badge.textContent = STATUS_LABEL[status] || '未取得'; badge.title = item && item.quote ? sourceDetails(item.quote) : ''; }
@@ -66,7 +95,10 @@ window.GMT = window.GMT || {};
       });
       block.append(title, list, el('p', 'universe-note', group.note)); root.appendChild(block);
     });
-    W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
+    W.updateUniverse = function () {
+      Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); });
+      renderUniverseUpdatedAt();
+    };
     var csvButton = document.getElementById('btn-universe-csv');
     if (csvButton) csvButton.addEventListener('click', function (event) { event.stopPropagation(); W.exportUniverse(); });
   };
