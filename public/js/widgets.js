@@ -8,8 +8,8 @@ window.GMT = window.GMT || {};
   var STATUS_LABEL = { PARTIAL_REALTIME: 'IEX一部', REALTIME: 'リアルタイム', DELAYED: '遅延', EOD: '終値', UNVERIFIED: '未確認', STALE: '要更新', UNAVAILABLE: '未取得' };
   var GROUPS = [
     { id: 'global', label: '世界株・オルカン参考', note: 'オルカンの基準価額ではなく、世界株と各市場の参考値です。', ids: ['ACWI', 'SPX', 'NDX', 'N225', 'DAX', 'HSI'] },
-    { id: 'fx', label: '為替（主要通貨ペア）', note: '証券会社の約定レート・スプレッド・スワップとは異なる参考値です。', ids: ['USDJPY', 'EURUSD', 'GBPUSD', 'AUDUSD', 'EURJPY'] },
-    { id: 'crypto', label: '暗号資産（参考）', note: '取引所の約定価格ではなく、集計された市場参考値です。', ids: ['BTCJPY', 'ETHJPY', 'SOLJPY', 'XRPJPY'] },
+    { id: 'fx', label: '為替（主要通貨ペア）', changeBasisLabel: '前営業日比', note: '証券会社の約定レート・スプレッド・スワップとは異なる参考値です。', ids: ['USDJPY', 'EURUSD', 'GBPUSD', 'AUDUSD', 'EURJPY'] },
+    { id: 'crypto', label: '暗号資産（参考）', changeBasisLabel: '前UTC日比', note: '取引所の約定価格ではなく、集計された市場参考値です。', ids: ['BTCJPY', 'ETHJPY', 'SOLJPY', 'XRPJPY'] },
   ];
   var COMPARE_IDS = ['ACWI', 'USDJPY', 'EURUSD', 'N225', 'SPX', 'BTCJPY', 'ETHJPY', 'XAU'];
   var chart = { id: null, limit: 60, root: null, canvas: null, tooltip: null, rows: [] };
@@ -59,14 +59,17 @@ window.GMT = window.GMT || {};
   W.initUniverse = function (root) {
     var cells = {}; root.classList.add('universe-grid');
     GROUPS.forEach(function (group) {
-      var block = el('section', 'universe-block universe-' + group.id), title = el('div', 'universe-title'), list = el('div', 'universe-list'); title.append(el('span', null, group.label), el('span', 'universe-count', group.ids.length + '件'));
+      var block = el('section', 'universe-block universe-' + group.id), title = el('div', 'universe-title'), heading = el('span', 'universe-heading'), list = el('div', 'universe-list');
+      heading.append(el('span', null, group.label));
+      if (group.changeBasisLabel) heading.append(el('span', 'universe-basis', group.changeBasisLabel));
+      title.append(heading, el('span', 'universe-count', group.ids.length + '件'));
       group.ids.forEach(function (id) {
         var row = el('div', 'universe-row'), symbol = el('span', 'u-symbol', id), price = el('span', 'u-price', '—'), change = el('span', 'u-change', '—'), mini = document.createElement('canvas'), badge = sourceBadge(null);
         mini.width = 58; mini.height = 16; mini.className = 'u-spark'; selectable(row, id, id); row.append(symbol, price, change, mini, badge); list.appendChild(row); cells[id] = { symbol: symbol, price: price, change: change, mini: mini, badge: badge };
       });
       block.append(title, list, el('p', 'universe-note', group.note)); root.appendChild(block);
     });
-    W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
+    W.updateUniverse = function () { Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChange(change); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
     var csvButton = document.getElementById('btn-universe-csv');
     if (csvButton) csvButton.addEventListener('click', function (event) { event.stopPropagation(); W.exportUniverse(); });
   };
