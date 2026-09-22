@@ -6,6 +6,22 @@ window.GMT = window.GMT || {};
   var LAYOUT_KEY = 'gmt1-layout-v4', board = document.getElementById('board'), statusMsg = document.getElementById('status-msg'), badge = document.getElementById('conn-badge'), updated = document.getElementById('last-update');
   var detailDrawer = document.getElementById('detail-drawer'), detailContent = document.getElementById('detail-content'), detailOpen = false, detailBarsLoading = Object.create(null), detailBarsUnavailable = Object.create(null), detailFocusReturn = null;
   var STATUS_LABEL = { PARTIAL_REALTIME: 'IEX一部', REALTIME: 'リアルタイム', DELAYED: '遅延', EOD: '終値', UNVERIFIED: '未確認', STALE: '要更新', UNAVAILABLE: '未取得' };
+  // GMT-UX-02/06: header health is derived from the server's single worst-value
+  // freshness order, never from array position.
+  var HEALTH_TEXT = { FRESH: '● データ正常', STALE: '● 一部要更新', UNKNOWN: '● 鮮度未評価', UNAVAILABLE: '● 一部未取得' };
+  var HEALTH_CLASS = { FRESH: 'badge-live', STALE: 'badge-down', UNKNOWN: 'badge-delayed', UNAVAILABLE: 'badge-down' };
+  var FRESHNESS_RANK = { FRESH: 0, UNKNOWN: 1, STALE: 2, UNAVAILABLE: 3 };
+  function healthSummaryText(health) {
+    var counts = (health && health.counts) || {};
+    return '正常 ' + (counts.FRESH || 0) + ' / 要更新 ' + (counts.STALE || 0) + ' / 未評価 ' + (counts.UNKNOWN || 0) + ' / 未取得 ' + (counts.UNAVAILABLE || 0);
+  }
+  function describeHealth(status, health) {
+    var summary = healthSummaryText(health);
+    if (status === 'FRESH') return 'すべての銘柄でデータ鮮度は正常です（' + summary + '）。';
+    if (status === 'STALE') return '一部の銘柄が「要更新」です。最後に確認できた値（last-known-good）を経過時間つきで表示しています（' + summary + '）。';
+    if (status === 'UNKNOWN') return '鮮度が未評価の銘柄があります。評価が完了するまで「正常」とは表示しません（' + summary + '）。';
+    return '一部の銘柄を取得できていません。数値は表示できるものだけを示しています（' + summary + '）。';
+  }
   function say(message) { if (statusMsg) statusMsg.textContent = message; }
   function formatAreaValue(value) { if (!Number.isFinite(value) || value <= 0) return null; return value >= 1e9 ? '$' + (value / 1e9).toFixed(2) + 'B' : value >= 1e6 ? '$' + (value / 1e6).toFixed(1) + 'M' : '$' + Math.round(value).toLocaleString('en-US'); }
   function formatPrice(value, decimals) { return Number.isFinite(value) ? Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals || 2, maximumFractionDigits: decimals || 2 }) : '—'; }
@@ -37,6 +53,8 @@ window.GMT = window.GMT || {};
     hero.append(symbolLine, nameLine, price, changeLine, sourceStatus); detailContent.appendChild(hero);
     var grid = detailElement('section', 'detail-grid');
     grid.append(
+      detailField('鮮度', G.freshness.label(quote) + '（' + G.freshness.ageText(quote) + '）', 'detail-freshness fresh-' + String(quote.freshness || 'UNKNOWN').toLowerCase()),
+      detailField('データ期限', formatTimestamp(quote.expiresAt)),
       detailField('出所', quote.provider || '—'),
       detailField('配信区分', quote.deliveryLabel || STATUS_LABEL[status] || '—'),
       detailField('基準時刻', formatTimestamp(quote.asOf)),
@@ -107,7 +125,32 @@ window.GMT = window.GMT || {};
     var item = G.get(id), quote = item && item.quote;
     if (!item || !quote) { say('注目 [' + id + ']：確認済みの市場データを取得中です。'); return; }
     var asOf = quote.asOf ? '基準 ' + quote.asOf : quote.fetchedAt ? '取得 ' + quote.fetchedAt : '確認済み時刻なし';
-    say('注目 [' + (item.displaySymbol || id) + ']：' + (item.name || id) + ' ・ ' + (quote.provider || '出所未取得') + ' ・ ' + (quote.deliveryLabel || STATUS_LABEL[quote.status] || '未取得') + ' ・ ' + asOf + '。');
+    say('注目 [' + (item.displaySymbol || id) + ']：' + (item.name || id) + ' ・ ' + (quote.provider || '出所未取得') + ' ・ ' + (quote.deliveryLabel || STATUS_LABEL[quote.status] || '未取得') + ' ・ 鮮度 ' + G.freshness.label(quote) + '（' + G.freshness.ageText(quote) + '） ・ ' + asOf + '。');
+  }
+  // GMT-UX-06: per-provider freshness strip. Summary is always visible; the
+  // detailed provider chips can be collapsed (default collapsed on mobile) so
+  // technical detail never crowds the market data.
+  function renderFreshnessStrip(data) {
+    var strip = document.getElementById('freshness-providers'), summary = document.getElementById('freshness-summary');
+    var health = data && data.health;
+    if (summary) summary.textContent = data && health ? 'データ鮮度：' + (HEALTH_TEXT[health.status] || '● 未評価').replace('● ', '') + '（' + healthSummaryText(health) + '）' : 'データ鮮度：取得できませんでした';
+    if (!strip) return;
+    strip.replaceChildren();
+    if (!data || !Array.isArray(data.instruments)) return;
+    var byProvider = {};
+    data.instruments.forEach(function (item) {
+      var quote = item.quote || {}, pid = quote.provider || '未取得';
+      var entry = byProvider[pid] || (byProvider[pid] = { provider: pid, freshness: quote.freshness || 'UNKNOWN', ageSeconds: quote.ageSeconds, count: 0 });
+      entry.count++;
+      if ((FRESHNESS_RANK[quote.freshness] || 0) > (FRESHNESS_RANK[entry.freshness] || 0)) { entry.freshness = quote.freshness || 'UNKNOWN'; entry.ageSeconds = quote.ageSeconds; }
+    });
+    Object.keys(byProvider).forEach(function (key) {
+      var entry = byProvider[key], chip = document.createElement('span');
+      chip.className = 'fresh-chip fresh-' + entry.freshness.toLowerCase();
+      chip.textContent = entry.provider + ' · ' + G.freshness.label({ freshness: entry.freshness }) + ' · ' + G.freshness.ageText({ ageSeconds: entry.ageSeconds }) + ' · ' + entry.count + '件';
+      chip.title = entry.provider + ' の最悪鮮度: ' + entry.freshness;
+      strip.appendChild(chip);
+    });
   }
   function log(line, cls) { var out = document.getElementById('boot-log'); if (!out) return; var span = document.createElement('span'); span.className = cls || ''; span.textContent = line; out.appendChild(span); out.appendChild(document.createTextNode('\n')); }
   var storage = (function () { try { localStorage.setItem('__gmt_test__', '1'); localStorage.removeItem('__gmt_test__'); return localStorage; } catch (_) { return null; } })();
@@ -131,14 +174,15 @@ window.GMT = window.GMT || {};
   }
   function updateUtcClock() { var target = document.getElementById('utc-clock'); if (target) target.textContent = new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour12: false }) + ' UTC'; }
   function setConnection(data) {
-    var quotes = ((data && data.instruments) || []).map(function (item) { return item.quote || {}; });
-    var hasPartial = quotes.some(function (q) { return q.status === 'PARTIAL_REALTIME'; }), hasEod = quotes.some(function (q) { return q.status === 'EOD'; }), hasDelayed = quotes.some(function (q) { return q.status === 'DELAYED'; });
-    var status = hasPartial && (hasEod || hasDelayed) ? 'MIXED' : hasPartial ? 'PARTIAL_REALTIME' : quotes.some(function (q) { return q.status === 'REALTIME'; }) ? 'REALTIME' : hasDelayed ? 'DELAYED' : hasEod ? 'EOD' : quotes.some(function (q) { return q.status === 'STALE'; }) ? 'STALE' : quotes.some(function (q) { return q.status === 'UNVERIFIED'; }) ? 'UNVERIFIED' : 'UNAVAILABLE';
-    var text = status === 'MIXED' ? '● 複数ソース参考値' : status === 'PARTIAL_REALTIME' ? '● IEX一部市場データ' : status === 'REALTIME' ? '● データ接続中' : status === 'DELAYED' ? '● 遅延データ' : status === 'EOD' ? '● 終値データ' : status === 'STALE' ? '● 更新待ちデータ' : status === 'UNVERIFIED' ? '● 配信区分を要確認' : '● データ未取得';
-    badge.className = 'badge ' + (status === 'UNAVAILABLE' || status === 'STALE' ? 'badge-down' : status === 'DELAYED' || status === 'EOD' || status === 'UNVERIFIED' || status === 'PARTIAL_REALTIME' || status === 'MIXED' ? 'badge-delayed' : 'badge-live'); badge.textContent = text;
+    var health = data && data.health;
+    var status = health ? health.status : 'UNAVAILABLE';
+    badge.className = 'badge ' + (HEALTH_CLASS[status] || 'badge-delayed');
+    badge.textContent = HEALTH_TEXT[status] || '● データ状態不明';
+    badge.title = health ? 'データ鮮度: ' + status + '（' + healthSummaryText(health) + '）' : '市場データの接続状態';
     if (updated) updated.textContent = data && data.generatedAt ? '更新 ' + new Date(data.generatedAt).toLocaleTimeString('ja-JP', { hour12: false }) : '更新 --';
+    renderFreshnessStrip(data);
     if (G.selectedInstrumentId) { showFocus(G.selectedInstrumentId); if (detailOpen) renderDetail(G.selectedInstrumentId); return; }
-    say(status === 'UNAVAILABLE' ? '承認済みの無料データ提供元が未設定です。合成値は表示しません。' : status === 'MIXED' ? '世界株参考・為替・暗号資産は提供元と配信区分が異なります。数値を見る前に各バッジを確認してください。' : status === 'PARTIAL_REALTIME' ? 'IEXは米国の単一取引所であり、市場全体を統合した配信ではありません。' : status === 'STALE' ? '提供元の更新に失敗しました。最後に確認できた値を「要更新」と表示しています。' : status === 'UNVERIFIED' ? 'データは取得しましたが、配信区分は未確認です。' : '市場データを更新しました。銘柄ごとに出所と配信区分を表示します。');
+    say(health ? describeHealth(status, health) : 'データ状態を取得できませんでした。前回の確認済み値があればその鮮度を表示します。');
   }
   function refreshNow() { say('確認済みの市場データを更新中…'); G.api.refresh(true).then(function () { return G.api.loadBars(G.selectedInstrumentId || 'ACWI'); }).catch(function () { say('データ取得に失敗しました。前回の確認済み値があれば「要更新」と表示します。'); }); }
   function initReset() { document.getElementById('btn-reset').addEventListener('click', function () { if (storage) storage.removeItem(LAYOUT_KEY); location.reload(); }); document.getElementById('btn-refresh').addEventListener('click', refreshNow); }
@@ -146,13 +190,22 @@ window.GMT = window.GMT || {};
     document.getElementById('btn-detail-close').addEventListener('click', closeDetail);
     document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && detailOpen) { event.preventDefault(); closeDetail(); } });
   }
+  function initFreshnessToggle() {
+    var toggle = document.getElementById('btn-fresh-toggle'), strip = document.getElementById('freshness-strip');
+    if (!toggle || !strip) return;
+    toggle.addEventListener('click', function () {
+      var expanded = strip.classList.toggle('is-expanded');
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.textContent = expanded ? '詳細を閉じる' : '詳細';
+    });
+  }
   function boot() {
     log('Global Market Terminal 起動 v4.0.0 ・ 無料市場参考データモード', 'ok'); log('データ経路 ....... ブラウザ → Global Market Terminal API → 承認済み提供元', 'ok'); log('合成データ ....... 無効', 'ok'); log('調査対象 ......... 世界株参考・為替・暗号資産', 'ok'); log('判断レーダー ..... 売買推奨ではなく、出所と値動きの確認用です', 'warn'); log('配置 ............. 世界市場時計は最下段に固定', 'ok');
-    var W = G.widgets; W.initUniverse(document.getElementById('w-universe')); W.initChart(document.getElementById('w-chart')); W.initRadar(document.getElementById('w-radar')); W.initCompare(document.getElementById('w-compare')); W.initClocks(document.getElementById('w-clocks'));
+    var W = G.widgets; W.initUniverse(document.getElementById('w-universe')); W.initChart(document.getElementById('w-chart')); W.initRadar(document.getElementById('w-radar')); W.initWatchlist(document.getElementById('w-compare')); W.initClocks(document.getElementById('w-clocks'));
     G.onInstrumentSelected(function (id) { showFocus(id); W.updateRadar(); });
-    G.onUpdate(function (data) { W.updateUniverse(); W.updateChart(); W.updateRadar(); W.updateCompare(); setConnection(data); }); G.onBars(function (id) { if (detailOpen && G.selectedInstrumentId === id) renderDetail(id); if (id === G.selectedInstrumentId) { W.updateChart(); W.updateRadar(); } });
-    initDnD(); initReset(); initDetail(); updateUtcClock(); setInterval(updateUtcClock, 1000);
-    G.api.refresh(false).then(function () { G.selectInstrument('ACWI'); return G.api.hydrateSparklines(['ACWI', 'USDJPY', 'EURUSD', 'GBPUSD', 'AUDUSD', 'EURJPY', 'BTCJPY', 'ETHJPY', 'SOLJPY', 'XRPJPY'], 60); }).catch(function () { setConnection(null); }); G.api.startPolling(60000);
+    G.onUpdate(function (data) { W.updateUniverse(); W.updateChart(); W.updateRadar(); W.updateWatchlist(); setConnection(data); }); G.onBars(function (id) { if (detailOpen && G.selectedInstrumentId === id) renderDetail(id); if (id === G.selectedInstrumentId) { W.updateChart(); W.updateRadar(); } });
+    initDnD(); initReset(); initDetail(); initFreshnessToggle(); updateUtcClock(); setInterval(updateUtcClock, 1000);
+    G.api.refresh(false).then(function () { G.selectInstrument('ACWI'); }).catch(function () { setConnection(null); }); G.api.startPolling(60000);
     setTimeout(function () { document.getElementById('boot-log').classList.add('collapsed'); }, 6000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

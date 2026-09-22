@@ -9,6 +9,57 @@ window.GMT = window.GMT || {};
   G.onUpdate = function (fn) { updateListeners.push(fn); };
   G.onBars = function (fn) { barsListeners.push(fn); };
   G.get = function (id) { return G.store[id] || null; };
+
+  // GMT-UX-07: watchlist. Single-device only (localStorage), no cross-device sync.
+  // Kept in the data layer so the universe list and the monitoring panel always
+  // read one source of truth.
+  var WATCHLIST_KEY = 'gmt1-watchlist-v1', watchListeners = [];
+  function readWatchlist() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.filter(function (id) { return typeof id === 'string'; }) : [];
+    } catch (_) { return []; }
+  }
+  var watchlist = readWatchlist();
+  function persistWatchlist() { try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist)); } catch (_) {} }
+  function notifyWatchlist() { watchListeners.forEach(function (fn) { try { fn(watchlist.slice()); } catch (_) {} }); }
+  G.watchlist = {
+    ids: function () { return watchlist.slice(); },
+    has: function (id) { return watchlist.indexOf(id) >= 0; },
+    toggle: function (id) {
+      var index = watchlist.indexOf(id);
+      if (index >= 0) watchlist.splice(index, 1);
+      else if (id) watchlist.push(id);
+      persistWatchlist(); notifyWatchlist();
+      return watchlist.indexOf(id) >= 0;
+    },
+    onChange: function (fn) { watchListeners.push(fn); },
+  };
+
+  // GMT-UX-02/06: shared freshness presentation helpers so every surface renders
+  // the contract identically (no title-attribute-only provenance on mobile).
+  var FRESHNESS_LABELS = { FRESH: '正常', STALE: '要更新', UNKNOWN: '未評価', UNAVAILABLE: '未取得' };
+  G.freshness = {
+    label: function (quote) { return FRESHNESS_LABELS[quote && quote.freshness] || '未評価'; },
+    ageText: function (quote) {
+      var seconds = quote && quote.ageSeconds;
+      if (!Number.isFinite(seconds)) return '経過時間なし';
+      if (seconds < 90) return 'たった今';
+      var minutes = Math.round(seconds / 60);
+      if (minutes < 60) return minutes + '分前';
+      var hours = Math.round(minutes / 60);
+      if (hours < 24) return hours + '時間前';
+      return Math.round(hours / 24) + '日前';
+    },
+    // Provider + age, plus an explicit last-known-good marker for stale values.
+    sourceText: function (quote) {
+      if (!quote) return '未取得';
+      var parts = [quote.provider || '出所未取得', G.freshness.ageText(quote)];
+      if (quote.freshness === 'STALE' && Number.isFinite(quote.price)) parts.push('last-known-good');
+      return parts.join(' · ');
+    },
+  };
+
   // Derive the previous-close basis (close value + the UTC day it represents)
   // used for daily change, respecting each instrument group's provenance rules
   // (P1-CHG / P1-YEN). Both the change-percent math and P1-YEN's period-alignment

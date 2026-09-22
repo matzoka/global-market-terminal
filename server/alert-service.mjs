@@ -11,6 +11,22 @@ import { byId } from './instruments.mjs';
 //   - Alert delivery failures MUST NOT affect dashboard/health/quote refresh.
 //   - No dependency libraries; plain fetch to the webhook.
 
+// ---------------------------------------------------------------------------
+// GMT-UX-09: notification channel separation.
+//
+// Incidents, human approvals, and market signals have different audiences,
+// urgency and noise budgets. They are separated by an explicit channel so a
+// message never mixes two purposes and a future policy change (mute market
+// signals, page on incidents) cannot accidentally affect the others. Only the
+// system-alerts channel is wired today; approvals and market-signals exist as
+// reserved, independently-addressable channels (GMT-UX-11 is out of scope).
+export const ALERT_CHANNELS = Object.freeze({
+  SYSTEM_ALERTS: Object.freeze({ id: 'system-alerts', label: 'システム障害', webhookEnv: 'DISCORD_WEBHOOK_URL', policy: 'severity=worst-value, 12h reminder, retry until delivered' }),
+  APPROVALS: Object.freeze({ id: 'approvals', label: '承認・確認', webhookEnv: 'DISCORD_WEBHOOK_APPROVALS_URL', policy: 'human action required' }),
+  MARKET_SIGNALS: Object.freeze({ id: 'market-signals', label: '市場シグナル', webhookEnv: 'DISCORD_WEBHOOK_MARKET_SIGNALS_URL', policy: 'watchlist thresholds, noise-limited' }),
+});
+const SYSTEM_CHANNEL = ALERT_CHANNELS.SYSTEM_ALERTS;
+
 // The Cron trigger runs every 30min (wrangler.jsonc). A same-incident
 // re-notification cooldown of 12h keeps this a "reminder", not a resend on
 // every cron tick: the same unresolved incident notifies once, then again at
@@ -21,19 +37,38 @@ const CONSECUTIVE_THRESHOLD = 2; // 2 consecutive failures -> WARNING/CRITICAL
 // failure, rest of the dashboard still usable); at or above this many instruments
 // in one incident, treat it as a broad/CRITICAL outage.
 const CRITICAL_AFFECTED_THRESHOLD = 5;
+// GMT-UX-01: a failed delivery must NOT be suppressed for the full 12h cooldown.
+// Instead it is retried with bounded backoff (1m doubles up to 30m) until the
+// webhook accepts the message, so an incident notification is not permanently lost.
+const DELIVERY_RETRY_BASE_MS = 60 * 1000;
+const DELIVERY_RETRY_MAX_MS = 30 * 60 * 1000;
+const SEVERITY_RANK = Object.freeze({ INFO: 0, WARNING: 1, CRITICAL: 2 });
 
 // Statuses that represent an actual data problem (not a normal quality label).
 function isAbnormal(status) {
   return status === 'UNAVAILABLE' || status === 'STALE';
 }
 
-function severityFor({ status, consecutive, affectedCount }) {
+// GMT-UX-01: severity ordering is now explicit and monotonic —
+// STALE is always LESS severe than UNAVAILABLE (the pre-fix logic could rank a
+// STALE incident CRITICAL while a broad UNAVAILABLE stayed WARNING).
+function severityForStatus(status, consecutive, affectedCount) {
   if (status === 'UNAVAILABLE') return affectedCount >= CRITICAL_AFFECTED_THRESHOLD ? 'CRITICAL' : 'WARNING';
-  if (status === 'STALE') {
-    if (consecutive >= CONSECUTIVE_THRESHOLD) return affectedCount >= 2 ? 'CRITICAL' : 'WARNING';
-    return 'INFO'; // single STALE first failure: record only
-  }
+  if (status === 'STALE') return consecutive >= CONSECUTIVE_THRESHOLD ? 'WARNING' : 'INFO';
   return 'INFO';
+}
+function worstSeverity(severities) {
+  return severities.reduce((worst, value) => (SEVERITY_RANK[value] > SEVERITY_RANK[worst] ? value : worst), 'INFO');
+}
+// When one incident mixes STALE and UNAVAILABLE rows, the worst status wins
+// instead of whichever row happened to be first in the array.
+function worstStatus(statuses) {
+  if (statuses.includes('UNAVAILABLE')) return 'UNAVAILABLE';
+  if (statuses.includes('STALE')) return 'STALE';
+  return statuses[0] || 'UNKNOWN';
+}
+function deliveryBackoffMs(failures) {
+  return Math.min(DELIVERY_RETRY_MAX_MS, DELIVERY_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1));
 }
 
 function incidentKey(provider, reason, severity) {
@@ -41,7 +76,7 @@ function incidentKey(provider, reason, severity) {
 }
 
 function rank(sev) {
-  return sev === 'CRITICAL' ? 3 : sev === 'WARNING' ? 2 : 1;
+  return SEVERITY_RANK[sev] || 0;
 }
 
 function mask(url) {
@@ -127,9 +162,11 @@ function toJst(iso) {
   return `${jst.getUTCFullYear()}-${pad(jst.getUTCMonth() + 1)}-${pad(jst.getUTCDate())} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())} JST`;
 }
 
-function formatAlert({ severity, provider, affected, status, reason, firstDetected, count, total }) {
+function formatAlert({ severity, channel, provider, affected, status, reason, firstDetected, count, total }) {
   return [
     `⚠️ Global Market Terminal — データ取得障害（${severityLabel(severity)}）`,
+    '',
+    `通知チャネル：#${channel || SYSTEM_CHANNEL.id}（${ALERT_CHANNELS.SYSTEM_ALERTS.label}）`,
     '',
     `データ提供元：`,
     provider,
@@ -160,12 +197,14 @@ function formatAlert({ severity, provider, affected, status, reason, firstDetect
   ].join('\n');
 }
 
-function formatRecovery({ provider, affected, firstDetected, recoveredAt, durationMinutes }) {
+function formatRecovery({ channel, provider, affected, firstDetected, recoveredAt, durationMinutes }) {
   const hours = Math.floor(durationMinutes / 60);
   const minutes = durationMinutes % 60;
   const durationLabel = hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
   return [
     `✅ Global Market Terminal — 復旧`,
+    '',
+    `通知チャネル：#${channel || SYSTEM_CHANNEL.id}（${ALERT_CHANNELS.SYSTEM_ALERTS.label}）`,
     '',
     `データ提供元：`,
     provider,
@@ -219,19 +258,24 @@ export async function evaluateAlerts(rows, env = {}, ctx = {}) {
 
   for (const [groupKey, group] of groups) {
     const affected = group.rows.map((r) => r.id);
-    const status = group.rows[0].status;
+    const statuses = [...new Set(group.rows.map((r) => r.status))];
+    const status = worstStatus(statuses);
     const stored = await safeGet(kv, groupKey);
     const consecutive = (stored && stored.status === status) ? (stored.consecutiveFailures || 0) + 1 : 1;
-    const severity = severityFor({ status, consecutive, affectedCount: affected.length });
+    // GMT-UX-01: severity is the WORST across every status present in the
+    // incident, so a mixed STALE+UNAVAILABLE incident can no longer be decided by
+    // whichever row happened to be first.
+    const severity = worstSeverity(statuses.map((value) => severityForStatus(value, consecutive, affected.length)));
 
     if (severity === 'INFO') {
       // Record only; no Discord notification.
       await safePut(kv, groupKey, {
-        status, reason: group.reason, consecutiveFailures: consecutive,
+        channel: SYSTEM_CHANNEL.id, provider: group.provider, status, reason: group.reason, consecutiveFailures: consecutive,
         firstDetectedAt: stored?.firstDetectedAt || new Date(nowMs).toISOString(),
         lastDetectedAt: new Date(nowMs).toISOString(),
         lastAlertAt: stored?.lastAlertAt || null,
         severity, affected, alerted: stored?.alerted || false, recoveryNotified: false,
+        deliveryFailures: stored?.deliveryFailures || 0, nextAttemptAt: null,
       });
       continue;
     }
@@ -241,23 +285,37 @@ export async function evaluateAlerts(rows, env = {}, ctx = {}) {
     // Escalate (re-notify within cooldown) when severity worsens, or when this is
     // a fresh occurrence after a prior recovery (stored status RECOVERED).
     const escalated = (stored?.status === 'RECOVERED') || (stored?.severity && rank(stored.severity) < rank(severity));
+    // A failed delivery schedules a short retry; a successful alert is governed
+    // by the 12h reminder cooldown instead.
+    const nextAttemptAt = stored?.nextAttemptAt ? Date.parse(stored.nextAttemptAt) : 0;
+    const deliveryRequired = Boolean(webhookUrl);
+    const shouldAttempt = deliveryRequired && (!inCooldown || escalated) && !(nowMs < nextAttemptAt);
 
-    if (!inCooldown || escalated) {
+    let delivered = false;
+    if (shouldAttempt) {
       const text = formatAlert({
-        severity, provider: group.provider, affected, status, reason: group.reason,
+        severity, channel: SYSTEM_CHANNEL.id, provider: group.provider, affected, status, reason: group.reason,
         firstDetected: stored?.firstDetectedAt || new Date(nowMs).toISOString(),
         count: affected.length, total,
       });
-      const ok = await sendDiscordAlert(webhookUrl, text);
-      if (ok) alertsSent++;
+      delivered = await sendDiscordAlert(webhookUrl, text);
+      if (delivered) alertsSent++;
     }
 
+    // GMT-UX-01: "sent" is recorded ONLY when delivery actually succeeded (or no
+    // channel is configured, so there is nothing to deliver). A configured channel
+    // that FAILED does not start the 12h cooldown and is retried with bounded
+    // backoff, so an incident notification is never silently lost for 12h.
+    const succeeded = delivered || !deliveryRequired;
+    const deliveryFailures = succeeded ? 0 : (stored?.deliveryFailures || 0) + (shouldAttempt ? 1 : 0);
     await safePut(kv, groupKey, {
-      status, reason: group.reason, consecutiveFailures: consecutive,
+      channel: SYSTEM_CHANNEL.id, provider: group.provider, status, reason: group.reason, consecutiveFailures: consecutive,
       firstDetectedAt: stored?.firstDetectedAt || new Date(nowMs).toISOString(),
       lastDetectedAt: new Date(nowMs).toISOString(),
-      lastAlertAt: (inCooldown && !escalated) ? (stored?.lastAlertAt || null) : new Date(nowMs).toISOString(),
-      severity, affected, alerted: true, recoveryNotified: false,
+      lastAlertAt: succeeded ? new Date(nowMs).toISOString() : (stored?.lastAlertAt || null),
+      severity, affected, alerted: succeeded ? true : Boolean(stored?.alerted), recoveryNotified: false,
+      deliveryFailures,
+      nextAttemptAt: succeeded ? null : (shouldAttempt ? new Date(nowMs + deliveryBackoffMs(deliveryFailures)).toISOString() : (stored?.nextAttemptAt || null)),
     });
   }
 
@@ -274,15 +332,33 @@ export async function evaluateAlerts(rows, env = {}, ctx = {}) {
       ? Math.max(0, Math.round((nowMs - Date.parse(stored.firstDetectedAt)) / 60000))
       : 0;
     const text = formatRecovery({
+      channel: stored.channel || SYSTEM_CHANNEL.id,
       provider: stored.provider || groupKey.split('|')[0],
       affected: stored.affected || [],
       firstDetected: stored.firstDetectedAt,
       recoveredAt: new Date(nowMs).toISOString(),
       durationMinutes: durationMin,
     });
-    const ok = await sendDiscordAlert(webhookUrl, text);
-    if (ok) recovered++;
-    await safePut(kv, groupKey, { ...stored, recoveryNotified: true, status: 'RECOVERED', consecutiveFailures: 0 });
+    // GMT-UX-01: only mark the incident recovered once recovery delivery
+    // succeeded (or no channel is configured); otherwise retry with backoff.
+    const backoffUntil = stored.nextAttemptAt ? Date.parse(stored.nextAttemptAt) : 0;
+    const deliveryRequired = Boolean(webhookUrl);
+    let delivered = false;
+    if (deliveryRequired && !(nowMs < backoffUntil)) {
+      delivered = await sendDiscordAlert(webhookUrl, text);
+      if (delivered) recovered++;
+    }
+    const succeeded = delivered || !deliveryRequired;
+    const deliveryFailures = succeeded ? 0 : (stored.deliveryFailures || 0) + (nowMs < backoffUntil ? 0 : 1);
+    await safePut(kv, groupKey, {
+      ...stored,
+      channel: stored.channel || SYSTEM_CHANNEL.id,
+      recoveryNotified: succeeded,
+      status: succeeded ? 'RECOVERED' : stored.status,
+      consecutiveFailures: succeeded ? 0 : stored.consecutiveFailures,
+      deliveryFailures,
+      nextAttemptAt: succeeded ? null : new Date(nowMs + deliveryBackoffMs(deliveryFailures)).toISOString(),
+    });
   }
 
   return { evaluated: total, alertsSent, recovered };

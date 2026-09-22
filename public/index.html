@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
 <title>Global Market Terminal // 投資先レーダー</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="css/terminal.css">
 </head>
 <body>
@@ -25,6 +26,12 @@
   </div>
 </header>
 
+<div id="freshness-strip" class="freshness-strip">
+  <span id="freshness-summary" class="freshness-summary" aria-live="polite">データ鮮度：取得中…</span>
+  <div id="freshness-providers" class="freshness-providers" aria-label="提供元ごとのデータ鮮度"></div>
+  <button id="btn-fresh-toggle" class="tbtn fresh-toggle" type="button" aria-expanded="false" aria-controls="freshness-providers">詳細</button>
+</div>
+
 <div id="boot-log" class="boot-log" aria-live="polite"></div>
 
 <main id="board" class="board" aria-label="投資候補を比較する市場情報パネル">
@@ -32,8 +39,8 @@
   <section class="panel universe-panel" data-widget="universe" data-span="12">
     <header class="panel-head">
       <span class="grip" title="ドラッグして移動">&#x28FF;</span>
-      <span class="panel-title">注目市場 &mdash; 世界株・為替・暗号資産</span>
-      <span id="universe-updated" class="panel-updated" title="注目市場データの最終更新時刻">更新 --</span>
+      <span class="panel-title">マーケット・ユニバース &mdash; 全43銘柄</span>
+      <span id="universe-updated" class="panel-updated" title="ユニバースの最終更新時刻">更新 --</span>
       <span class="panel-tag">RADAR</span>
       <button id="btn-universe-csv" class="panel-csv-btn" type="button" title="注目市場に表示中の一覧をCSVで保存">CSV</button>
       <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
@@ -79,8 +86,8 @@
   <section class="panel compare-panel" data-widget="compare" data-span="12">
     <header class="panel-head">
       <span class="grip" title="ドラッグして移動">&#x28FF;</span>
-      <span class="panel-title">候補を比べる</span>
-      <span class="panel-tag">SELECT</span>
+      <span class="panel-title">ウォッチリスト &mdash; 継続監視</span>
+      <span class="panel-tag">WATCH</span>
       <button class="span-btn" type="button" title="パネル幅を切り替え">&#x25E7;</button>
     </header>
     <div class="panel-body" id="w-compare"></div>
