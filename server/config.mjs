@@ -26,6 +26,11 @@ export const config = Object.freeze({
   eodhdApiToken: (process.env.EODHD_API_TOKEN || '').trim(),
   metalsDevApiKey: (process.env.METALS_DEV_API_KEY || '').trim(),
   quoteCacheSeconds: intFromEnv('QUOTE_CACHE_SECONDS', 60, 15, 3600),
+  // GMT-UX-05: how often a forced (?refresh=1) refresh may bypass provider TTLs,
+  // and the per-provider upstream deadline. Env-overridable so tests can exercise
+  // throttling/deadline paths without waiting on wall-clock time.
+  forceRefreshMinIntervalMs: intFromEnv('FORCE_REFRESH_MIN_INTERVAL_MS', 15_000, 0, 600_000),
+  providerRefreshDeadlineMs: intFromEnv('PROVIDER_REFRESH_DEADLINE_MS', 12_000, 50, 60_000),
   realtimeInstrumentIds: idSet('MARKET_DATA_REALTIME_IDS'),
   delayedInstrumentIds: idSet('MARKET_DATA_DELAYED_IDS'),
   eodInstrumentIds: idSet('MARKET_DATA_EOD_IDS'),

@@ -6,13 +6,28 @@ window.GMT = window.GMT || {};
   var W = G.widgets = {};
   var selectedId = null, selectionListeners = [];
   var STATUS_LABEL = { PARTIAL_REALTIME: 'IEX一部', REALTIME: 'リアルタイム', DELAYED: '遅延', EOD: '終値', UNVERIFIED: '未確認', STALE: '要更新', UNAVAILABLE: '未取得' };
-  var GROUPS = [
-    { id: 'global', label: '世界株・オルカン参考', note: 'オルカンの基準価額ではなく、世界株と各市場の参考値です。', ids: ['ACWI', 'SPX', 'NDX', 'N225', 'DAX', 'HSI'] },
-    { id: 'fx', label: '為替（主要通貨ペア）', changeBasisLabel: '前営業日比', note: '証券会社の約定レート・スプレッド・スワップとは異なる参考値です。', ids: ['USDJPY', 'EURUSD', 'GBPUSD', 'AUDUSD', 'EURJPY'] },
-    { id: 'crypto', label: '暗号資産（参考）', changeBasisLabel: '前UTC日比', note: '取引所の約定価格ではなく、集計された市場参考値です。', ids: ['BTCJPY', 'ETHJPY', 'SOLJPY', 'XRPJPY'] },
+  // GMT-UX-04/07: the universe is no longer a fixed 16-instrument list. Every one
+  // of the 43 instruments the server already returns is reachable, filtered by
+  // these categories and searchable across ID / name / symbol / sector.
+  // Category ids/labels and the change-basis labels shown once on FX/crypto
+  // headers are preserved from the earlier fixed-universe panel (CSV-EXPORT /
+  // change-basis work) so those features stay compatible.
+  var CATEGORIES = [
+    { id: 'all', label: 'すべて', match: function () { return true; } },
+    { id: 'global', label: '世界株・オルカン参考', match: function (item) { return item.kind === 'index' || item.researchGroup === 'global'; } },
+    { id: 'fx', label: '為替（主要通貨ペア）', changeBasisLabel: '前営業日比', match: function (item) { return item.researchGroup === 'fx'; } },
+    { id: 'crypto', label: '暗号資産（参考）', changeBasisLabel: '前UTC日比', match: function (item) { return item.researchGroup === 'crypto'; } },
+    { id: 'equity', label: '米国株（セクター）', match: function (item) { return item.kind === 'equity'; } },
+    { id: 'metal', label: '金属（参考）', match: function (item) { return item.kind === 'metal'; } },
   ];
-  var COMPARE_IDS = ['ACWI', 'USDJPY', 'EURUSD', 'N225', 'SPX', 'BTCJPY', 'ETHJPY', 'XAU'];
+  var SORTS = [
+    { id: 'change_desc', label: '変動率（高い順）' },
+    { id: 'change_asc', label: '変動率（低い順）' },
+    { id: 'name', label: '銘柄名' },
+    { id: 'id', label: 'コード' },
+  ];
   var chart = { id: null, limit: 60, root: null, canvas: null, tooltip: null, rows: [] };
+
 
   function el(tag, className, text) { var node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; }
   function fmt(value, decimals) { return Number.isFinite(value) ? Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals == null ? 2 : decimals, maximumFractionDigits: decimals == null ? 2 : decimals }) : '—'; }
@@ -32,16 +47,30 @@ window.GMT = window.GMT || {};
   }
   function polarity(value) { return Number.isFinite(value) && value < 0 ? 'num-down' : 'num-up'; }
   function statusOf(item) { return item && item.quote ? item.quote.status : 'UNAVAILABLE'; }
-  // One widget-level timestamp: latest quote fetch among displayed rows, then dashboard generatedAt.
-  // Keep this off the market rows so the same instant is not repeated 15 times.
+  function sourceDetails(quote) { return [quote.provider, quote.deliveryLabel, quote.providerSymbol, quote.asOf && '基準 ' + quote.asOf, quote.fetchedAt && '取得 ' + quote.fetchedAt, quote.reason].filter(Boolean).join(' · '); }
+  function sourceBadge(item) { var status = statusOf(item), badge = el('span', 'src-badge src-' + status.toLowerCase(), STATUS_LABEL[status] || '未取得'); if (item && item.quote) badge.title = sourceDetails(item.quote); return badge; }
+  function selectedItem() { return selectedId ? G.get(selectedId) : null; }
+  function groupFor(item) { return CATEGORIES.find(function (group) { return group.id === 'global' && group.match(item); }) || CATEGORIES.find(function (group) { return group.id !== 'all' && group.match(item); }) || null; }
+  // GMT-UX-02/06: the freshness badge is the primary "can I trust this?" signal.
+  function freshBadge(quote) {
+    var freshness = (quote && quote.freshness) || 'UNKNOWN';
+    var badge = el('span', 'src-badge fresh-' + freshness.toLowerCase(), G.freshness.label(quote));
+    badge.title = quote ? sourceDetails(quote) + ' · 鮮度 ' + freshness + ' · 経過 ' + G.freshness.ageText(quote) : '';
+    return badge;
+  }
+
+  G.onInstrumentSelected = function (listener) { selectionListeners.push(listener); };
+  G.selectInstrument = function (id) { if (!id) return; selectedId = id; G.selectedInstrumentId = id; selectionListeners.forEach(function (listener) { listener(id); }); };
+
+  // One widget-level timestamp for the universe panel: the newest quote fetch
+  // among displayed instruments, else dashboard generatedAt. Kept off the market
+  // rows so the same instant is not repeated on every row.
   function latestUniverseTimestamp() {
     var latest = 0;
-    GROUPS.forEach(function (group) {
-      group.ids.forEach(function (id) {
-        var quote = (G.get(id) || {}).quote || {};
-        var ts = Date.parse(quote.fetchedAt || quote.receivedAt || '');
-        if (Number.isFinite(ts)) latest = Math.max(latest, ts);
-      });
+    Object.keys(G.store).forEach(function (id) {
+      var quote = (G.store[id] || {}).quote || {};
+      var ts = Date.parse(quote.fetchedAt || quote.receivedAt || '');
+      if (Number.isFinite(ts)) latest = Math.max(latest, ts);
     });
     if (latest) return new Date(latest).toISOString();
     var generated = Date.parse((G.meta && G.meta.generatedAt) || '');
@@ -57,55 +86,155 @@ window.GMT = window.GMT || {};
     if (!stamp) return;
     var iso = latestUniverseTimestamp();
     stamp.textContent = formatUpdatedAt(iso);
-    stamp.title = iso ? '注目市場データの最終更新（取得時刻） ' + iso : '注目市場データの最終更新時刻は未取得です';
+    stamp.title = iso ? 'ユニバースの最終更新（取得時刻） ' + iso : 'ユニバースの最終更新時刻は未取得です';
   }
   W.latestUniverseTimestamp = latestUniverseTimestamp;
   W.formatUpdatedAt = formatUpdatedAt;
-  function sourceDetails(quote) { return [quote.provider, quote.deliveryLabel, quote.providerSymbol, quote.asOf && '基準 ' + quote.asOf, quote.fetchedAt && '取得 ' + quote.fetchedAt, quote.reason].filter(Boolean).join(' · '); }
-  function sourceBadge(item) { var status = statusOf(item), badge = el('span', 'src-badge src-' + status.toLowerCase(), STATUS_LABEL[status] || '未取得'); if (item && item.quote) badge.title = sourceDetails(item.quote); return badge; }
-  function setBadge(badge, item) { var status = statusOf(item); badge.className = 'src-badge src-' + status.toLowerCase(); badge.textContent = STATUS_LABEL[status] || '未取得'; badge.title = item && item.quote ? sourceDetails(item.quote) : ''; }
-  function selectedItem() { return selectedId ? G.get(selectedId) : null; }
-  function groupFor(item) { return GROUPS.find(function (group) { return group.ids.indexOf(item && item.id) >= 0; }) || null; }
 
-  G.onInstrumentSelected = function (listener) { selectionListeners.push(listener); };
-  G.selectInstrument = function (id) { if (!id) return; selectedId = id; G.selectedInstrumentId = id; selectionListeners.forEach(function (listener) { listener(id); }); };
-  function selectable(node, id, label) {
-    node.classList.add('instrument-select'); node.tabIndex = 0; node.setAttribute('role', 'button'); node.setAttribute('aria-label', label + ' を選択して調査する'); node.setAttribute('aria-pressed', 'false');
-    function choose() { G.selectInstrument(id); }
-    node.addEventListener('click', choose);
-    node.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(); } });
-    selectionListeners.push(function (activeId) { var active = activeId === id; node.classList.toggle('is-selected', active); node.setAttribute('aria-pressed', String(active)); });
+  // ---------------------------------------------------------------------------
+  // GMT-UX-04/07: dynamic 43-instrument universe with search / filter / sort and
+  // a localStorage watchlist. The list is re-rendered from the current store, so
+  // every instrument the server returns is reachable and stays live.
+  var universe = { root: null, listWrap: null, summary: null, state: { query: '', category: 'all', sort: 'change_desc', watchOnly: false } };
+
+  function matchesQuery(item, query) {
+    if (!query) return true;
+    var needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return [item.id, item.name, item.displaySymbol, item.providerSymbol, item.sector, item.region, item.keywords]
+      .filter(Boolean).some(function (value) { return String(value).toLowerCase().indexOf(needle) >= 0; });
+  }
+  function sortRows(rows, sort) {
+    var copy = rows.slice();
+    if (sort === 'name') copy.sort(function (a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id), 'ja'); });
+    else if (sort === 'id') copy.sort(function (a, b) { return String(a.id).localeCompare(String(b.id)); });
+    else {
+      var direction = sort === 'change_asc' ? 1 : -1;
+      copy.sort(function (a, b) { var av = G.changePercent(a), bv = G.changePercent(b); var an = Number.isFinite(av), bn = Number.isFinite(bv); if (!an && !bn) return 0; if (!an) return 1; if (!bn) return -1; return (av - bv) * direction; });
+    }
+    return copy;
   }
   function spark(canvas, values, positive) {
     if (!canvas) return;
-    var context = canvas.getContext('2d'), width = canvas.width, height = canvas.height; context.clearRect(0, 0, width, height);
+    var context = canvas.getContext('2d'), width = canvas.width, height = canvas.height;
+    if (!context) return;
+    context.clearRect(0, 0, width, height);
     if (!values || values.length < 2) return;
     var min = Math.min.apply(null, values), max = Math.max.apply(null, values), span = max - min || 1;
     context.beginPath(); values.forEach(function (value, index) { var x = 1 + index * (width - 2) / (values.length - 1), y = height - 2 - (value - min) * (height - 4) / span; if (index) context.lineTo(x, y); else context.moveTo(x, y); });
     context.strokeStyle = positive ? '#3dff6e' : '#ff4458'; context.lineWidth = 1; context.stroke();
   }
-
-  W.initUniverse = function (root) {
-    var cells = {}; root.classList.add('universe-grid');
-    GROUPS.forEach(function (group) {
-      var block = el('section', 'universe-block universe-' + group.id), title = el('div', 'universe-title'), heading = el('span', 'universe-heading'), list = el('div', 'universe-list');
-      heading.append(el('span', null, group.label));
-      if (group.changeBasisLabel) heading.append(el('span', 'universe-basis', group.changeBasisLabel));
-      title.append(heading, el('span', 'universe-count', group.ids.length + '件'));
-      group.ids.forEach(function (id) {
-        var row = el('div', 'universe-row'), symbol = el('span', 'u-symbol', id), price = el('span', 'u-price', '—'), change = el('span', 'u-change', '—'), mini = document.createElement('canvas'), badge = sourceBadge(null);
-        mini.width = 58; mini.height = 16; mini.className = 'u-spark'; selectable(row, id, id); row.append(symbol, price, change, mini, badge); list.appendChild(row); cells[id] = { symbol: symbol, price: price, change: change, mini: mini, badge: badge };
-      });
-      block.append(title, list, el('p', 'universe-note', group.note)); root.appendChild(block);
+  function instrumentRow(item) {
+    var quote = item.quote || {}, change = G.changePercent(item), starred = G.watchlist.has(item.id);
+    var row = el('div', 'universe-row instrument-select');
+    row.tabIndex = 0; row.dataset.id = item.id; row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', (item.displaySymbol || item.id) + ' ' + (item.name || '') + ' を選択して調査する');
+    var star = el('button', 'watch-star', starred ? '★' : '☆');
+    star.type = 'button'; star.dataset.id = item.id; star.setAttribute('aria-pressed', String(starred));
+    star.title = starred ? 'ウォッチリストから外す' : 'ウォッチリストに登録';
+    star.setAttribute('aria-label', (item.name || item.id) + (starred ? ' をウォッチリストから外す' : ' をウォッチリストに登録'));
+    var symbol = el('span', 'u-symbol', item.displaySymbol || item.id);
+    var name = el('span', 'u-name', item.name || item.id);
+    var price = el('span', 'u-price', fmt(quote.price, item.decimals));
+    // Per PR #2, the change-basis label stays on the group header, never on the row.
+    var changeCell = el('span', 'u-change ' + polarity(change), fmtChange(change));
+    var mini = document.createElement('canvas'); mini.width = 58; mini.height = 14; mini.className = 'u-spark';
+    spark(mini, item.history || [], !Number.isFinite(change) || change >= 0);
+    var source = el('span', 'u-source'); source.append(mini, freshBadge(quote), el('span', 'u-provider', G.freshness.sourceText(quote)));
+    row.append(star, symbol, name, price, changeCell, source);
+    return row;
+  }
+  // The currently displayed (filtered + sorted) groups, in panel order. Shared by
+  // rendering and CSV export so the file matches what the user sees.
+  function displayedGroups() {
+    var all = Object.keys(G.store).map(function (id) { return G.store[id]; });
+    var state = universe.state;
+    var category = CATEGORIES.find(function (group) { return group.id === state.category; }) || CATEGORIES[0];
+    var visible = all.filter(function (item) { return category.match(item) && matchesQuery(item, state.query) && (!state.watchOnly || G.watchlist.has(item.id)); });
+    return CATEGORIES.filter(function (group) { return group.id !== 'all'; }).map(function (group) {
+      return { group: group, rows: sortRows(visible.filter(function (item) { return group.match(item); }), state.sort) };
+    }).filter(function (entry) { return entry.rows.length; });
+  }
+  function renderUniverseList() {
+    var list = universe.listWrap; if (!list) return;
+    var entries = displayedGroups();
+    list.replaceChildren();
+    var rendered = 0;
+    entries.forEach(function (entry) {
+      var block = el('section', 'universe-block universe-' + entry.group.id);
+      var title = el('div', 'universe-title'), heading = el('span', 'universe-heading');
+      heading.append(el('span', null, entry.group.label));
+      if (entry.group.changeBasisLabel) heading.append(el('span', 'universe-basis', entry.group.changeBasisLabel));
+      title.append(heading, el('span', 'universe-count', entry.rows.length + '件'));
+      var body = el('div', 'universe-body');
+      entry.rows.forEach(function (item) { body.appendChild(instrumentRow(item)); });
+      block.append(title, body); list.appendChild(block);
+      rendered += entry.rows.length;
     });
-    W.updateUniverse = function () {
-      Object.keys(cells).forEach(function (id) { var item = G.get(id), cell = cells[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChange(change); cell.change.className = 'u-change ' + polarity(change); setBadge(cell.badge, item); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); });
-      renderUniverseUpdatedAt();
-    };
+    if (!rendered) list.appendChild(el('p', 'universe-empty', '該当する銘柄がありません。検索語や絞り込みを変更してください。'));
+    if (universe.summary) universe.summary.textContent = '表示 ' + rendered + ' / 全' + Object.keys(G.store).length + '銘柄';
+    var active = G.selectedInstrumentId;
+    list.querySelectorAll('.universe-row').forEach(function (row) { row.classList.toggle('is-selected', row.dataset.id === active); row.setAttribute('aria-pressed', String(row.dataset.id === active)); });
+    renderUniverseUpdatedAt();
+  }
+  W.initUniverse = function (root) {
+    universe.root = root; root.classList.add('universe');
+    var toolbar = el('div', 'universe-toolbar');
+    var search = document.createElement('input');
+    search.type = 'search'; search.id = 'universe-search'; search.className = 'universe-search';
+    search.placeholder = '銘柄名・IDで検索（例：NVDA、金、ドル円）'; search.setAttribute('aria-label', '銘柄を検索');
+    search.addEventListener('input', function () { universe.state.query = search.value; renderUniverseList(); });
+    var chips = el('div', 'universe-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'カテゴリで絞り込み');
+    CATEGORIES.forEach(function (group) {
+      var chip = el('button', 'chip' + (group.id === universe.state.category ? ' is-active' : ''), group.label);
+      chip.type = 'button'; chip.dataset.cat = group.id; chip.setAttribute('aria-pressed', String(group.id === universe.state.category));
+      chip.addEventListener('click', function () {
+        universe.state.category = group.id;
+        chips.querySelectorAll('.chip').forEach(function (node) { var active = node.dataset.cat === group.id; node.classList.toggle('is-active', active); node.setAttribute('aria-pressed', String(active)); });
+        renderUniverseList();
+      });
+      chips.appendChild(chip);
+    });
+    var controls = el('div', 'universe-controls');
+    var sortLabel = el('label', 'universe-sort-label', '並び ');
+    var sort = document.createElement('select'); sort.id = 'universe-sort'; sort.className = 'universe-sort'; sort.setAttribute('aria-label', '並べ替え');
+    SORTS.forEach(function (option) { var node = document.createElement('option'); node.value = option.id; node.textContent = option.label; if (option.id === universe.state.sort) node.selected = true; sort.appendChild(node); });
+    sort.addEventListener('change', function () { universe.state.sort = sort.value; renderUniverseList(); });
+    sortLabel.appendChild(sort);
+    var watchLabel = el('label', 'universe-watch-label');
+    var watchOnly = document.createElement('input'); watchOnly.type = 'checkbox'; watchOnly.id = 'universe-watch-only';
+    watchOnly.addEventListener('change', function () { universe.state.watchOnly = watchOnly.checked; renderUniverseList(); });
+    watchLabel.append(watchOnly, el('span', null, '★ウォッチのみ'));
+    universe.summary = el('span', 'universe-summary', '全43銘柄');
+    controls.append(sortLabel, watchLabel, universe.summary);
+    toolbar.append(search, chips, controls);
+    universe.listWrap = el('div', 'universe-list');
+    // One delegated handler serves all (re-rendered) rows, so no listener leaks.
+    universe.listWrap.addEventListener('click', function (event) {
+      var star = event.target.closest('.watch-star');
+      if (star) { G.watchlist.toggle(star.dataset.id); return; }
+      var row = event.target.closest('.universe-row');
+      if (row) G.selectInstrument(row.dataset.id);
+    });
+    universe.listWrap.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var star = event.target.closest('.watch-star'); if (star) return;
+      var row = event.target.closest('.universe-row'); if (row) { event.preventDefault(); G.selectInstrument(row.dataset.id); }
+    });
+    G.onInstrumentSelected(function (id) {
+      if (!universe.listWrap) return;
+      universe.listWrap.querySelectorAll('.universe-row').forEach(function (row) { var active = row.dataset.id === id; row.classList.toggle('is-selected', active); row.setAttribute('aria-pressed', String(active)); });
+    });
+    G.watchlist.onChange(function () { renderUniverseList(); });
     var csvButton = document.getElementById('btn-universe-csv');
     if (csvButton) csvButton.addEventListener('click', function (event) { event.stopPropagation(); W.exportUniverse(); });
+    root.append(toolbar, universe.listWrap);
+    W.updateUniverse = renderUniverseList;
+    renderUniverseList();
   };
 
+  // CSV export of the rows currently displayed in the universe panel (respects
+  // search / filter / sort), preserving the change-basis provenance per row.
   var CSV_COLUMNS = [
     { key: 'group', label: '区分' },
     { key: 'id', label: '銘柄コード' },
@@ -122,13 +251,13 @@ window.GMT = window.GMT || {};
   ];
   W.exportUniverse = function () {
     var rows = [];
-    GROUPS.forEach(function (group) {
-      group.ids.forEach(function (id) {
-        var item = G.get(id) || {}, quote = item.quote || {}, change = G.changePercent(item), status = statusOf(item);
+    displayedGroups().forEach(function (entry) {
+      entry.rows.forEach(function (item) {
+        var quote = item.quote || {}, change = G.changePercent(item), status = statusOf(item);
         rows.push({
-          group: group.label,
-          id: id,
-          symbol: item.displaySymbol || id,
+          group: entry.group.label,
+          id: item.id,
+          symbol: item.displaySymbol || item.id,
           name: item.name || '',
           price: Number.isFinite(quote.price) ? quote.price : '',
           changePercent: Number.isFinite(change) ? Number(change.toFixed(4)) : '',
@@ -145,6 +274,48 @@ window.GMT = window.GMT || {};
     G.csv.download('gmt-universe-' + G.csv.filenameStamp() + '.csv', G.csv.toCsv(CSV_COLUMNS, rows));
     return true;
   };
+
+  // GMT-UX-07: watchlist monitoring + comparison surface. Replaces the old fixed
+  // 8-instrument compare strip; the user chooses what to keep watching.
+  var watchPanel = { root: null };
+  W.initWatchlist = function (root) {
+    watchPanel.root = root; root.classList.add('watchlist');
+    W.updateWatchlist = function () {
+      var panel = watchPanel.root; if (!panel) return;
+      var ids = G.watchlist.ids();
+      panel.replaceChildren();
+      if (!ids.length) {
+        panel.appendChild(el('p', 'watchlist-empty', '銘柄一覧の★を押すと、ここに継続監視リストが表示されます。'));
+        panel.appendChild(el('p', 'panel-note', '端末内保存（localStorage）。複数端末の同期は行いません。'));
+        return;
+      }
+      var strip = el('div', 'watchlist-strip');
+      ids.forEach(function (id) {
+        var item = G.get(id); if (!item) return;
+        var quote = item.quote || {}, change = G.changePercent(item);
+        var card = el('div', 'watch-card instrument-select'); card.tabIndex = 0; card.dataset.id = id; card.setAttribute('role', 'button');
+        card.setAttribute('aria-label', (item.displaySymbol || id) + ' を選択して調査する');
+        var star = el('button', 'watch-star', '★'); star.type = 'button'; star.dataset.id = id; star.title = 'ウォッチリストから外す'; star.setAttribute('aria-label', (item.name || id) + ' をウォッチリストから外す');
+        var head = el('div', 'watch-head'); head.append(star, el('span', 'w-symbol', item.displaySymbol || id), el('span', 'w-name', item.name || id));
+        var metrics = el('div', 'watch-metrics'); metrics.append(el('span', 'w-price', fmt(quote.price, item.decimals)), el('span', 'w-change ' + polarity(change), fmtChangeWithLabel(item)));
+        var source = el('div', 'watch-source'); source.append(freshBadge(quote), el('span', 'u-provider', G.freshness.sourceText(quote)));
+        card.append(head, metrics, source);
+        strip.appendChild(card);
+      });
+      panel.append(strip, el('p', 'panel-note', '端末内保存（localStorage）。複数端末の同期は行いません。'));
+    };
+    root.addEventListener('click', function (event) {
+      var star = event.target.closest('.watch-star'); if (star) { G.watchlist.toggle(star.dataset.id); return; }
+      var card = event.target.closest('.watch-card'); if (card) G.selectInstrument(card.dataset.id);
+    });
+    root.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var card = event.target.closest('.watch-card'); if (card) { event.preventDefault(); G.selectInstrument(card.dataset.id); }
+    });
+    G.watchlist.onChange(function () { W.updateWatchlist(); });
+    W.updateWatchlist();
+  };
+
 
   function range(rows, key, direction) { return rows.reduce(function (result, row) { return direction === 'min' ? Math.min(result, row[key]) : Math.max(result, row[key]); }, direction === 'min' ? Infinity : -Infinity); }
   function chartRowsFor(id) { var payload = G.bars[id], rows = payload && Array.isArray(payload.bars) ? payload.bars : []; return rows.slice(-chart.limit); }
@@ -170,7 +341,7 @@ window.GMT = window.GMT || {};
     var item = selectedItem(), q = item && item.quote, title = document.getElementById('selected-chart-title'), tag = document.getElementById('selected-chart-tag'), summary = document.getElementById('selected-chart-summary'), note = document.getElementById('selected-chart-note');
     if (!item || !q) { title.textContent = '選択中の推移'; tag.textContent = '—'; summary.textContent = '対象を選択してください'; return; }
     var labels = { 5: '1週', 22: '1か月', 60: '3か月', 250: '1年' }, bars = G.bars[item.id] || {};
-    title.textContent = (item.displaySymbol || item.id) + ' — ' + (labels[chart.limit] || '日足'); tag.textContent = q.providerSymbol || item.providerSymbol || item.id; summary.replaceChildren(); summary.append(item.name + '　価格 ' + fmt(q.price, item.decimals) + '　'); summary.appendChild(sourceBadge(item));
+    title.textContent = (item.displaySymbol || item.id) + ' — ' + (labels[chart.limit] || '日足'); tag.textContent = q.providerSymbol || item.providerSymbol || item.id; summary.replaceChildren(); summary.append(item.name + '　価格 ' + fmt(q.price, item.decimals) + '　'); summary.appendChild(freshBadge(q)); summary.appendChild(sourceBadge(item));
     var closeOnly = bars.bars && bars.bars.length && bars.bars.every(function (bar) { return bar.closeOnly === true; });
     note.textContent = bars.bars && bars.bars.length ? (closeOnly ? '日次価格：' : '日足OHLC：') + (STATUS_LABEL[bars.status] || '未取得') + ' ・ ' + (bars.deliveryLabel || bars.provider || q.provider || '—') + ' ・ 確認済み ' + bars.bars.length + ' 本。売買を推奨する表示ではありません。' : '日足データなし：' + (bars.reason || '設定済みの無料提供元から取得できません') + '。';
   }
@@ -203,11 +374,8 @@ window.GMT = window.GMT || {};
     root.append(periodBlock, highBlock, volBlock, next, source, actions);
   };
 
-  W.initCompare = function (root) {
-    var cards = {}; root.classList.add('compare-strip');
-    COMPARE_IDS.forEach(function (id) { var card = el('div', 'compare-card'), symbol = el('div', 'compare-symbol', id), price = el('div', 'compare-price', '—'), change = el('div', 'compare-change', '—'), mini = document.createElement('canvas'); mini.width = 112; mini.height = 20; selectable(card, id, id); card.append(symbol, price, change, mini); root.appendChild(card); cards[id] = { symbol: symbol, price: price, change: change, mini: mini }; });
-    W.updateCompare = function () { Object.keys(cards).forEach(function (id) { var item = G.get(id), cell = cards[id]; if (!item) return; var change = G.changePercent(item); cell.symbol.textContent = item.displaySymbol || item.id; cell.price.textContent = fmt(item.quote.price, item.decimals); cell.change.textContent = fmtChangeWithLabel(item); cell.change.className = 'compare-change ' + polarity(change); spark(cell.mini, item.history || [], !Number.isFinite(change) || change >= 0); }); };
-  };
+  // (The fixed 8-instrument compare strip was replaced by the user-driven
+  // watchlist above, per GMT-UX-07 / figure 3.)
 
   var MARKETS = [
     { city: 'ニューヨーク', tz: 'America/New_York', exch: 'NYSE/NASDAQ', sessions: [[570, 960]] }, { city: 'ロンドン', tz: 'Europe/London', exch: 'LSE', sessions: [[480, 990]] }, { city: 'フランクフルト', tz: 'Europe/Berlin', exch: 'XETRA', sessions: [[540, 1050]] }, { city: '香港', tz: 'Asia/Hong_Kong', exch: 'HKEX', sessions: [[570, 720], [780, 960]], lunch: true }, { city: '上海', tz: 'Asia/Shanghai', exch: 'SSE', sessions: [[570, 690], [780, 900]], lunch: true }, { city: '東京', tz: 'Asia/Tokyo', exch: 'TSE', sessions: [[540, 690], [750, 930]], lunch: true }, { city: 'シドニー', tz: 'Australia/Sydney', exch: 'ASX', sessions: [[600, 960]] },

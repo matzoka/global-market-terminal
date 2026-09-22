@@ -19,11 +19,11 @@ export const instruments = [
 
   // FX は通貨ペアそのものの参考値。約定レート・スプレッド・スワップは
   // 利用する証券会社ごとに異なるため、ここでは表示しません。
-  instrument('USDJPY', '米ドル／円', 'FX', 'fx', 'USD/JPY', 3, { researchGroup: 'fx' }),
-  instrument('EURUSD', 'ユーロ／米ドル', 'FX', 'fx', 'EUR/USD', 5, { researchGroup: 'fx' }),
-  instrument('GBPUSD', '英ポンド／米ドル', 'FX', 'fx', 'GBP/USD', 5, { researchGroup: 'fx' }),
-  instrument('AUDUSD', '豪ドル／米ドル', 'FX', 'fx', 'AUD/USD', 5, { researchGroup: 'fx' }),
-  instrument('EURJPY', 'ユーロ／円', 'FX', 'fx', 'EUR/JPY', 3, { researchGroup: 'fx' }),
+  instrument('USDJPY', '米ドル／円', 'FX', 'fx', 'USD/JPY', 3, { researchGroup: 'fx', keywords: 'ドル円 ドルエン 米ドル円' }),
+  instrument('EURUSD', 'ユーロ／米ドル', 'FX', 'fx', 'EUR/USD', 5, { researchGroup: 'fx', keywords: 'ユーロドル ユーロ米ドル' }),
+  instrument('GBPUSD', '英ポンド／米ドル', 'FX', 'fx', 'GBP/USD', 5, { researchGroup: 'fx', keywords: 'ポンドドル 英ポンドドル' }),
+  instrument('AUDUSD', '豪ドル／米ドル', 'FX', 'fx', 'AUD/USD', 5, { researchGroup: 'fx', keywords: '豪ドルドル 豪ドル米ドル' }),
+  instrument('EURJPY', 'ユーロ／円', 'FX', 'fx', 'EUR/JPY', 3, { researchGroup: 'fx', keywords: 'ユーロ円' }),
 
   // CoinGecko の集計参考値。取引所の約定価格ではありません。
   instrument('BTCJPY', 'ビットコイン／円', 'CRYPTO', 'crypto', 'bitcoin', 0, { researchGroup: 'crypto', dataProvider: 'coingecko', coingeckoId: 'bitcoin', displaySymbol: 'BTC/JPY' }),
@@ -53,10 +53,10 @@ export const instruments = [
 
   // These are intentionally described as provider-configured instruments.
   // Their UI name is never allowed to imply spot data when a futures symbol is used.
-  instrument('XAU', 'GOLD', 'GLOBAL', 'metal', 'XAU/USD', 2, { displaySymbol: 'XAU/USD', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
-  instrument('XAG', 'SILVER', 'GLOBAL', 'metal', 'XAG/USD', 3, { displaySymbol: 'XAG/USD', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
-  instrument('XPT', 'PLATINUM', 'GLOBAL', 'metal', 'XPT/USD', 2, { displaySymbol: 'XPT/USD', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
-  instrument('XPD', 'PALLADIUM', 'GLOBAL', 'metal', 'XPD/USD', 2, { displaySymbol: 'XPD/USD', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
+  instrument('XAU', 'GOLD', 'GLOBAL', 'metal', 'XAU/USD', 2, { displaySymbol: 'XAU/USD', keywords: '金 ゴールド gold', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
+  instrument('XAG', 'SILVER', 'GLOBAL', 'metal', 'XAG/USD', 3, { displaySymbol: 'XAG/USD', keywords: '銀 シルバー silver', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
+  instrument('XPT', 'PLATINUM', 'GLOBAL', 'metal', 'XPT/USD', 2, { displaySymbol: 'XPT/USD', keywords: 'プラチナ platinum', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
+  instrument('XPD', 'PALLADIUM', 'GLOBAL', 'metal', 'XPD/USD', 2, { displaySymbol: 'XPD/USD', keywords: 'パラジウム palladium', contractLabel: 'SPOT — PROVIDER CONFIGURATION REQUIRED' }),
 ];
 
 export const byId = new Map(instruments.map((item) => [item.id, item]));
